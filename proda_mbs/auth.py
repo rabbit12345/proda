@@ -35,15 +35,42 @@ class ProdaAuthenticator:
         except Exception:
             return "could not read page state"
 
-    def login(self):
+    def login(self, max_otp_attempts: int = 3):
         """Execute the full PRODA login flow including 2FA."""
         self._navigate_to_login()
         self._enter_credentials()
         self._submit_login()
+
+        # Purge old PRODA emails before requesting new OTP
+        self._init_gmail_extractor()
+        self.gmail_extractor.purge_old_otp_emails()
+
         self._request_otp_via_email()
-        code = self._retrieve_otp_from_gmail()
-        self._submit_otp(code)
-        log("Login complete - reached My Services page")
+
+        for attempt in range(1, max_otp_attempts + 1):
+            log(f"OTP attempt {attempt}/{max_otp_attempts}")
+            code = self._retrieve_otp_from_gmail()
+            if not code:
+                if attempt < max_otp_attempts:
+                    log("No OTP found, requesting a new code...")
+                    self._request_new_otp()
+                    continue
+                raise LoginError("Could not retrieve OTP code from Gmail")
+
+            success = self._submit_otp(code)
+            if success:
+                log("Login complete - reached My Services page")
+                return
+
+            # OTP was rejected
+            if attempt < max_otp_attempts:
+                log("OTP rejected, purging and requesting a new code...")
+                self.gmail_extractor.purge_old_otp_emails()
+                self._request_new_otp()
+            else:
+                raise LoginError(
+                    f"OTP rejected after {max_otp_attempts} attempts. {self._diag()}"
+                )
 
     def _navigate_to_login(self):
         log("Navigating to PRODA login page")
@@ -62,31 +89,54 @@ class ProdaAuthenticator:
             )
 
     def _enter_credentials(self):
-        log("Entering credentials")
+        username = self.config.proda.username
+        password = self.config.proda.password
+        log(f"Entering credentials (user: {username}, pass: {'*' * len(password)})")
+
+        if not username or not password:
+            raise LoginError(
+                "PRODA username or password is empty. Check config.yaml"
+            )
+
         try:
             username_field = self.driver.find_element(
                 By.ID, "loginFormAndStuff:username"
             )
+            username_field.click()
             username_field.clear()
-            username_field.send_keys(self.config.proda.username)
+            # Use JavaScript to set value to avoid keystroke-triggered
+            # client-side validation (e.g. rejecting '@' mid-entry)
+            self.driver.execute_script(
+                "arguments[0].value = arguments[1]", username_field, username
+            )
+            # Dispatch input/change events so JSF picks up the value
+            self.driver.execute_script("""
+                var el = arguments[0];
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+                el.dispatchEvent(new Event('blur', {bubbles: true}));
+            """, username_field)
 
             password_field = self.driver.find_element(
                 By.ID, "loginFormAndStuff:inputPassword"
             )
+            password_field.click()
             password_field.clear()
-            password_field.send_keys(self.config.proda.password)
+            password_field.send_keys(password)
         except NoSuchElementException as e:
             raise LoginError(f"Could not find login form fields: {e}")
 
     def _submit_login(self):
         log("Submitting login form")
         try:
-            self.driver.find_element(
-                By.ID, "loginFormAndStuff:submitLoginWithProda"
-            ).click()
-        except NoSuchElementException:
+            submit_btn = self._wait(EC.element_to_be_clickable(
+                (By.ID, "loginFormAndStuff:submitLoginWithProda")
+            ))
+            submit_btn.click()
+        except (TimeoutException, NoSuchElementException):
             raise LoginError(
-                f"Login submit button not found. {self._diag()}"
+                f"Login submit button not found or not clickable. "
+                f"{self._diag()}"
             )
 
         # Wait for 2-step verification page to load.
@@ -117,17 +167,39 @@ class ProdaAuthenticator:
         except Exception:
             pass
 
-        # Check for common error text patterns on the page
-        for selector in [
-            "div.error", "div.alert-danger", "span.error",
-            "div#errorMessage", "p.error-message"
-        ]:
+        # JSF pages show errors in ui-messages, growl, or standard divs
+        selectors = [
+            "div.ui-messages-error",
+            "div.ui-messages",
+            "div.ui-growl-message",
+            "div.alert-danger",
+            "div.error",
+            "span.error",
+            "span.ui-message-error-detail",
+            "div#errorMessage",
+            "p.error-message",
+        ]
+        for selector in selectors:
             try:
                 el = self.driver.find_element(By.CSS_SELECTOR, selector)
                 if el.is_displayed() and el.text.strip():
                     return el.text.strip()
             except NoSuchElementException:
                 continue
+
+        # Fallback: if still on login page, scrape any visible text
+        # that looks like an error
+        try:
+            body_text = self.driver.find_element(By.TAG_NAME, "body").text
+            for phrase in [
+                "invalid", "incorrect", "failed", "locked",
+                "expired", "disabled", "try again",
+            ]:
+                for line in body_text.split("\n"):
+                    if phrase in line.lower() and len(line.strip()) < 200:
+                        return line.strip()
+        except Exception:
+            pass
 
         return None
 
@@ -193,35 +265,123 @@ class ProdaAuthenticator:
                 f"{self._diag()}"
             )
 
-    def _retrieve_otp_from_gmail(self):
-        log("Retrieving OTP from Gmail")
+    def _init_gmail_extractor(self):
+        """Initialize Gmail extractor once for reuse across attempts."""
+        if hasattr(self, 'gmail_extractor'):
+            return
         try:
-            extractor = GmailOtpExtractor(self.config.gmail)
+            self.gmail_extractor = GmailOtpExtractor(self.config.gmail)
         except GmailAuthError as e:
             raise LoginError(f"Gmail authentication failed: {e}")
 
-        code = extractor.get_otp_code()
-        if not code:
-            raise LoginError("Could not retrieve OTP code from Gmail")
-        log("OTP code retrieved successfully")
+    def _retrieve_otp_from_gmail(self) -> str | None:
+        """Retrieve OTP from Gmail. Returns None if not found."""
+        log("Retrieving OTP from Gmail")
+        code = self.gmail_extractor.get_otp_code()
+        if code:
+            log(f"OTP code retrieved: {code}")
+        else:
+            log("No OTP code found in Gmail")
         return code
 
-    def _submit_otp(self, code: str):
-        log("Submitting OTP code")
+    def _request_new_otp(self):
+        """Request a new OTP code when the previous one failed."""
+        # Look for a "resend" or "try again" link on the verification page
+        resend_selectors = [
+            (By.XPATH, "//a[contains(text(), 'Resend')]"),
+            (By.XPATH, "//a[contains(text(), 'resend')]"),
+            (By.XPATH, "//a[contains(text(), 'Send again')]"),
+            (By.XPATH, "//a[contains(text(), 'new code')]"),
+            (By.XPATH, "//button[contains(text(), 'Resend')]"),
+            (By.ID, "resendLink"),
+        ]
+        for by, selector in resend_selectors:
+            try:
+                el = WebDriverWait(self.driver, 3).until(
+                    EC.element_to_be_clickable((by, selector))
+                )
+                el.click()
+                log("Clicked resend OTP link")
+                time.sleep(3)
+                return
+            except TimeoutException:
+                continue
+
+        # If no resend link, try re-submitting via the backup channel flow
+        log("No resend link found, re-requesting via backup channel")
+        self._request_otp_via_email()
+
+    def _submit_otp(self, code: str) -> bool:
+        """Submit OTP code. Returns True if successful, False if rejected."""
+        log(f"Entering OTP code: {code}")
         try:
             otp_field = self._wait(EC.presence_of_element_located(
                 (By.ID, "otppswd")
             ))
+            otp_field.click()
             otp_field.clear()
-            otp_field.send_keys(code)
+            # Type OTP character by character with small delay
+            for ch in code:
+                otp_field.send_keys(ch)
+                time.sleep(0.1)
 
-            self.driver.find_element(By.ID, "submit-btn").click()
+            # Wait for the field value to be fully registered
+            time.sleep(2)
+            log("OTP entered, submitting...")
+
+            submit_btn = self._wait(EC.element_to_be_clickable(
+                (By.ID, "submit-btn")
+            ))
+            submit_btn.click()
+
+            # Give the server time to verify the OTP
             self._wait(
                 EC.title_contains("My Services"),
-                timeout=self.page_timeout
+                timeout=self.page_timeout * 2
             )
+            log("OTP accepted, reached My Services")
+            return True
         except TimeoutException:
-            raise LoginError(
-                f"Did not reach My Services page after OTP submission. "
-                f"{self._diag()}"
-            )
+            title = self.driver.title
+            url = self.driver.current_url
+            log(f"Post-OTP state: title='{title}' url='{url}'")
+
+            # Check for error messages on the page
+            error_msg = self._check_otp_error()
+            if error_msg:
+                log(f"OTP error: {error_msg}")
+                return False
+
+            # If we're on a page that's not login/verification, assume success
+            if "verification" not in title.lower() and "login" not in title.lower():
+                log(f"Landed on '{title}' — continuing")
+                return True
+
+            return False
+
+    def _check_otp_error(self) -> str | None:
+        """Check if the OTP page is showing an error message."""
+        selectors = [
+            "div.error", "span.error", "p.error",
+            "div.ui-messages-error", "div.alert-danger",
+            "span.ui-message-error-detail",
+        ]
+        for selector in selectors:
+            try:
+                el = self.driver.find_element(By.CSS_SELECTOR, selector)
+                if el.is_displayed() and el.text.strip():
+                    return el.text.strip()
+            except NoSuchElementException:
+                continue
+
+        # Check body text for common OTP error phrases
+        try:
+            body_text = self.driver.find_element(By.TAG_NAME, "body").text
+            for phrase in ["invalid", "incorrect", "expired", "try again"]:
+                for line in body_text.split("\n"):
+                    if phrase in line.lower() and len(line.strip()) < 200:
+                        return line.strip()
+        except Exception:
+            pass
+
+        return None

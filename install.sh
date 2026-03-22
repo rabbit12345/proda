@@ -171,10 +171,18 @@ if [ ! -f "$CONFIG_FILE" ]; then
     echo ""
 
     if [ -n "$PRODA_USER" ] && [ -n "$PRODA_PASS" ]; then
-        sed -i "s/username: \"\"/username: \"${PRODA_USER}\"/" "$CONFIG_FILE"
-        # Escape special chars in password for sed
-        ESCAPED_PASS=$(printf '%s\n' "$PRODA_PASS" | sed 's/[&/\]/\\&/g')
-        sed -i "s/password: \"\"/password: \"${ESCAPED_PASS}\"/" "$CONFIG_FILE"
+        # Use Python to write credentials safely (sed mangles special chars)
+        python3 -c "
+import sys, json
+config_path, username, password = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(config_path, 'r') as f:
+    content = f.read()
+# json.dumps produces valid YAML double-quoted strings with proper escaping
+content = content.replace('username: \"\"', 'username: ' + json.dumps(username), 1)
+content = content.replace('password: \"\"', 'password: ' + json.dumps(password), 1)
+with open(config_path, 'w') as f:
+    f.write(content)
+" "$CONFIG_FILE" "$PRODA_USER" "$PRODA_PASS"
         info "Credentials saved to config.yaml"
     else
         warn "Credentials not provided. Edit config.yaml manually before running."
