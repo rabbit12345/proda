@@ -27,6 +27,15 @@ info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+# Determine the real (non-root) user when running under sudo
+if [ -n "${SUDO_USER:-}" ]; then
+    REAL_USER="$SUDO_USER"
+    REAL_GROUP="$(id -gn "$SUDO_USER")"
+else
+    REAL_USER="$(whoami)"
+    REAL_GROUP="$(id -gn)"
+fi
+
 # ── Check we're on a Debian-based system ──────────────────────────────
 if ! command -v apt-get &>/dev/null; then
     error "This script requires a Debian-based system (apt-get not found)."
@@ -124,12 +133,21 @@ fi
 
 # ── 3. Python virtual environment ────────────────────────────────────
 info "Setting up Python virtual environment..."
-python3 -m venv "$VENV_DIR"
-source "$VENV_DIR/bin/activate"
 
-info "Installing Python dependencies..."
-pip install --upgrade pip -q
-pip install -r "$SCRIPT_DIR/requirements.txt" -q
+# Create venv as the real user (not root) to avoid permission issues
+if [ "$(whoami)" = "root" ] && [ "$REAL_USER" != "root" ]; then
+    sudo -u "$REAL_USER" python3 -m venv "$VENV_DIR"
+    sudo -u "$REAL_USER" bash -c "
+        source '$VENV_DIR/bin/activate' && \
+        pip install --upgrade pip -q && \
+        pip install -r '$SCRIPT_DIR/requirements.txt' -q
+    "
+else
+    python3 -m venv "$VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+    pip install --upgrade pip -q
+    pip install -r "$SCRIPT_DIR/requirements.txt" -q
+fi
 
 info "Python dependencies installed."
 
@@ -162,7 +180,8 @@ if [ ! -f "$CONFIG_FILE" ]; then
         warn "Credentials not provided. Edit config.yaml manually before running."
     fi
 
-    # Lock down config file permissions (owner read/write only)
+    # Lock down config file permissions and ensure correct ownership
+    chown "$REAL_USER:$REAL_GROUP" "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
 else
     info "config.yaml already exists, skipping credential setup."
@@ -193,10 +212,12 @@ source "$SCRIPT_DIR/.venv/bin/activate"
 python -m proda_mbs "$@"
 LAUNCHER_EOF
 
+chown "$REAL_USER:$REAL_GROUP" "$LAUNCHER"
 chmod +x "$LAUNCHER"
 
 # ── 7. Optional: create desktop shortcut ─────────────────────────────
-DESKTOP_DIR="$HOME/Desktop"
+DESKTOP_DIR="${SUDO_USER:+/home/$SUDO_USER}/Desktop"
+DESKTOP_DIR="${DESKTOP_DIR:-$HOME/Desktop}"
 if [ -d "$DESKTOP_DIR" ]; then
     read -rp "Create desktop shortcut? [y/N]: " CREATE_SHORTCUT
     if [[ "${CREATE_SHORTCUT,,}" == "y" ]]; then

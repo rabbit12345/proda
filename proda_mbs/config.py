@@ -69,8 +69,14 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
         config_path = os.path.join(base_dir, "config.yaml")
 
     if os.path.exists(config_path):
-        with open(config_path, "r") as f:
-            data = yaml.safe_load(f) or {}
+        try:
+            with open(config_path, "r") as f:
+                data = yaml.safe_load(f) or {}
+        except PermissionError:
+            raise ConfigError(
+                f"Permission denied reading '{config_path}'.\n"
+                f"  Fix with: sudo chown $(whoami) '{config_path}'"
+            )
 
         proda = data.get("proda", {})
         config.proda.username = proda.get("username", "")
