@@ -131,43 +131,34 @@ def main():
                 checker, session_keeper,
                 args.medicare, args.irn, args.name, args.items
             )
-
-            # After single check, offer interactive mode
             print("\nCheck complete. Enter another patient or 'q' to quit.")
-            while True:
-                patient = prompt_patient_details()
-                if patient is None:
-                    break
+
+        else:
+            print("\nReady for patient checks.")
+
+        # Interactive loop — keeps running until user quits
+        first_check = not (args.medicare and args.irn and args.name)
+        while True:
+            patient = prompt_patient_details()
+            if patient is None:
+                break
+
+            if not first_check:
                 try:
                     checker.new_check()
                 except MbsCheckerError:
                     log("Could not reset form, attempting page reload")
-                    navigator.navigate_to_mbs_checker()
-                run_single_check(
-                    checker, session_keeper,
-                    patient[0], patient[1], patient[2], args.items
-                )
-        else:
-            # Interactive mode
-            print("\nReady for patient checks.")
-            first_check = True
-            while True:
-                patient = prompt_patient_details()
-                if patient is None:
-                    break
-
-                if not first_check:
                     try:
-                        checker.new_check()
-                    except MbsCheckerError:
-                        log("Could not reset form, attempting page reload")
                         navigator.navigate_to_mbs_checker()
+                    except NavigationError as e:
+                        log(f"Navigation failed: {e}")
+                        continue
 
-                run_single_check(
-                    checker, session_keeper,
-                    patient[0], patient[1], patient[2], args.items
-                )
-                first_check = False
+            result = run_single_check(
+                checker, session_keeper,
+                patient[0], patient[1], patient[2], args.items
+            )
+            first_check = False
 
     except LoginError as e:
         log(f"Login failed: {e}")
@@ -181,7 +172,10 @@ def main():
         if session_keeper:
             session_keeper.stop()
         log("Closing browser...")
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            pass
         log("Done.")
 
 

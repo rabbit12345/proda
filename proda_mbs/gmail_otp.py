@@ -20,6 +20,7 @@ class GmailAuthError(Exception):
 
 class GmailOtpExtractor:
     SENDER = "proda@servicesaustralia.gov.au"
+    OTP_SUBJECT = "verification"  # PRODA OTP emails contain this in subject
     OTP_PATTERN = re.compile(r"^\d{6}$")
 
     def __init__(self, config: GmailConfig):
@@ -110,7 +111,41 @@ class GmailOtpExtractor:
         except OSError as e:
             print(f"Warning: could not save token file: {e}")
 
-    def get_otp_code(self, max_wait: int = 30, poll_interval: int = 2) -> str | None:
+    def purge_old_otp_emails(self):
+        """Delete only PRODA OTP/verification emails before requesting a new OTP.
+        Uses both sender AND subject filter to avoid trashing non-OTP PRODA emails
+        (e.g. account notifications, registration confirmations)."""
+        print(f"{time.strftime('%d/%m/%y %H:%M:%S')} Purging old PRODA OTP emails...")
+        query = f"from:{self.SENDER} subject:{self.OTP_SUBJECT}"
+        try:
+            results = self.service.users().messages().list(
+                userId="me", q=query
+            ).execute()
+            messages = results.get("messages", [])
+            count = 0
+            for message in messages:
+                # Double-check: only trash if subject actually contains
+                # verification-related keywords
+                msg_meta = self.service.users().messages().get(
+                    userId="me", id=message["id"], format="metadata",
+                    metadataHeaders=["Subject"]
+                ).execute()
+                subject = ""
+                for header in msg_meta.get("payload", {}).get("headers", []):
+                    if header["name"].lower() == "subject":
+                        subject = header["value"].lower()
+                        break
+                if any(kw in subject for kw in ["verification", "otp", "one-time", "security code"]):
+                    self.service.users().messages().trash(
+                        userId="me", id=message["id"]
+                    ).execute()
+                    count += 1
+            if count:
+                print(f"{time.strftime('%d/%m/%y %H:%M:%S')} Trashed {count} old PRODA OTP email(s)")
+        except Exception as e:
+            print(f"{time.strftime('%d/%m/%y %H:%M:%S')} Warning: could not purge old emails: {e}")
+
+    def get_otp_code(self, max_wait: int = 60, poll_interval: int = 3) -> str | None:
         """Poll Gmail for OTP code with retry logic.
 
         Args:
@@ -120,19 +155,24 @@ class GmailOtpExtractor:
         Returns:
             The 6-digit OTP code string, or None if not found.
         """
+        # Wait a few seconds for the email to arrive
+        time.sleep(5)
+
         elapsed = 0
         while elapsed < max_wait:
             code = self._try_extract_code()
             if code:
                 return code
+            print(f"{time.strftime('%d/%m/%y %H:%M:%S')} Waiting for OTP email... ({elapsed}s/{max_wait}s)")
             time.sleep(poll_interval)
             elapsed += poll_interval
 
         return None
 
     def _try_extract_code(self) -> str | None:
-        """Attempt to find and extract the OTP code from unread PRODA emails."""
-        query = f"from:{self.SENDER} newer_than:5m"
+        """Attempt to find and extract the OTP code from PRODA verification emails only."""
+        # Only look at verification emails from the last 2 minutes
+        query = f"from:{self.SENDER} subject:{self.OTP_SUBJECT} newer_than:2m"
         results = self.service.users().messages().list(
             userId="me", q=query
         ).execute()
@@ -141,6 +181,7 @@ class GmailOtpExtractor:
         if not messages:
             return None
 
+        # Process most recent message first
         for message in messages:
             msg = self.service.users().messages().get(
                 userId="me", id=message["id"]
@@ -170,7 +211,8 @@ class GmailOtpExtractor:
                     code = strong_tag.get_text().strip()
                     # Validate OTP is a 6-digit number
                     if self.OTP_PATTERN.match(code):
-                        # Trash the processed email
+                        print(f"{time.strftime('%d/%m/%y %H:%M:%S')} Found OTP: {code}")
+                        # Trash the processed email so it's not reused
                         self.service.users().messages().trash(
                             userId="me", id=message["id"]
                         ).execute()

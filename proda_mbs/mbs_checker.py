@@ -33,6 +33,56 @@ class MbsChecker:
     def _wait(self, condition, timeout=None):
         return WebDriverWait(self.driver, timeout or self.wait_timeout).until(condition)
 
+    def wait_for_page_ready(self, timeout=None):
+        """Wait until the MBS checker page is fully loaded and interactive.
+        Checks: DOM ready, no active AJAX, all key form elements present and enabled."""
+        timeout = timeout or self.config.session.page_load_timeout * 2
+        log("Waiting for MBS checker page to be fully loaded...")
+
+        # 1. Wait for document.readyState == 'complete'
+        WebDriverWait(self.driver, timeout).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+        log("DOM ready")
+
+        # 2. Wait for PrimeFaces AJAX to finish (if PrimeFaces is present)
+        try:
+            WebDriverWait(self.driver, timeout).until(
+                lambda d: d.execute_script(
+                    "return typeof PrimeFaces === 'undefined' || "
+                    "PrimeFaces.ajax.Queue.isEmpty()"
+                )
+            )
+            log("No active AJAX requests")
+        except Exception:
+            # PrimeFaces might not be available, continue anyway
+            pass
+
+        # 3. Wait for all key form elements to be present and interactable
+        key_elements = [
+            "guiForm:guiMedicareCardNumber",
+            "guiForm:guiIndividualReferenceNumber",
+            "guiForm:guiFirstName",
+            "guiForm:gui_patientConsentGiven",
+            "guiForm:gui_providerLocation",
+        ]
+        for el_id in key_elements:
+            self._wait(EC.element_to_be_clickable((By.ID, el_id)), timeout=timeout)
+
+        # 4. Wait for the tab view with MBS items to be present
+        self._wait(
+            EC.presence_of_element_located((
+                By.CSS_SELECTOR,
+                "div[id*='tabView'] ul.ui-tabs-nav, "
+                ".ui-tabs-nav, [role='tablist']"
+            )),
+            timeout=timeout
+        )
+
+        # 5. Small settle delay for any remaining JS rendering
+        time.sleep(1)
+        log("MBS checker page fully loaded and ready")
+
     def fill_patient_form(
         self, medicare_number: str, irn: str, first_name: str
     ):
@@ -87,7 +137,14 @@ class MbsChecker:
         log("Patient form filled")
 
     def select_mbs_items(self, items: Optional[List[str]] = None):
-        """Step 7: Select MBS items using the search field."""
+        """Step 7: Select MBS items by navigating tabs and clicking checkboxes.
+
+        The MBS items UI has tabs organized by number ranges (e.g. 00104-00699,
+        00701-10970). Each tab contains checkboxes with item numbers. We need to:
+        1. Find which tab contains the item number
+        2. Click that tab to show its checkboxes
+        3. Check the checkbox for the item
+        """
         if items is None:
             items = self.config.mbs.items_to_check
 
@@ -96,81 +153,160 @@ class MbsChecker:
 
         log(f"Selecting MBS items: {items}")
 
+        self._current_tab_text = None  # Track which tab is active
+
         for item_number in items:
             self._select_single_item(item_number)
 
         log(f"All {len(items)} MBS items selected")
 
-    def _select_single_item(self, item_number: str):
-        """Select a single MBS item by searching and clicking its checkbox."""
-        # Strip leading zeros for search (form says "leading zeros not required")
-        search_term = item_number.lstrip("0") or item_number
+    def _get_tab_ranges(self) -> List[Dict]:
+        """Re-parse tab headers fresh each time to avoid stale element references."""
+        tabs = []
+        tab_links = self.driver.find_elements(
+            By.CSS_SELECTOR, "div[id*='tabView'] ul.ui-tabs-nav li a, "
+            ".ui-tabs-nav li a, "
+            "[role='tablist'] li a, "
+            ".ui-tabs .ui-tabs-nav a"
+        )
 
-        log(f"Searching for MBS item: {item_number} (search: {search_term})")
-
-        # Clear and type in search field
-        search_field = self._wait(EC.element_to_be_clickable(
-            (By.ID, "guiForm:searchItemNumber")
-        ))
-        search_field.clear()
-        time.sleep(self.ajax_delay)
-
-        # Type the search term character by character to trigger AJAX keyup
-        for char in search_term:
-            search_field.send_keys(char)
-            time.sleep(0.3)
-
-        # Wait for AJAX to update the tab view with filtered results
-        time.sleep(self.ajax_delay)
-
-        # Find and click the checkbox for this item
-        try:
-            checkbox = self._find_item_checkbox(item_number)
-            if not checkbox.is_selected():
-                self.driver.execute_script("arguments[0].click();", checkbox)
-
-            # Wait for selected items panel to update
-            time.sleep(self.ajax_delay)
-            log(f"Selected MBS item: {item_number}")
-        except (TimeoutException, NoSuchElementException):
-            raise MbsCheckerError(
-                f"Could not find or select MBS item: {item_number}"
+        if not tab_links:
+            tab_links = self.driver.find_elements(
+                By.XPATH,
+                "//a[contains(text(), '-') and string-length(text()) < 20]"
             )
 
-        # Clear search field for next item
-        search_field = self.driver.find_element(
-            By.ID, "guiForm:searchItemNumber"
-        )
-        search_field.clear()
-        # Trigger the clear button via JS to reset the AJAX filter
+        for link in tab_links:
+            text = link.text.strip()
+            match = re.match(r"(\d+)\s*-\s*(\d+)", text)
+            if match:
+                tabs.append({
+                    "element": link,
+                    "text": text,
+                    "low": int(match.group(1)),
+                    "high": int(match.group(2)),
+                })
+
+        return tabs
+
+    def _find_tab_for_item(self, item_num: int, tabs: List[Dict]):
+        """Find which tab contains the given item number."""
+        for tab in tabs:
+            if tab["low"] <= item_num <= tab["high"]:
+                return tab
+        return None
+
+    def _click_tab_for_item(self, padded: str):
+        """Navigate to the correct tab for an item. Skips clicking if the
+        correct tab is already active to avoid AJAX reload that resets checkboxes."""
+        item_num = int(padded)
+        tabs = self._get_tab_ranges()
+
+        if not tabs:
+            log("Warning: no tabs found")
+            return tabs
+
+        tab = self._find_tab_for_item(item_num, tabs)
+        if tab:
+            # Skip clicking if we're already on this tab
+            if self._current_tab_text == tab["text"]:
+                log(f"Item {padded} is in current tab: {tab['text']} (already active)")
+                return tabs
+
+            log(f"Item {padded} is in tab: {tab['text']} (switching)")
+            try:
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView(true);", tab["element"]
+                )
+                time.sleep(0.3)
+                tab["element"].click()
+            except Exception:
+                self.driver.execute_script("arguments[0].click();", tab["element"])
+            time.sleep(self.ajax_delay)
+            self._current_tab_text = tab["text"]
+        else:
+            log(f"Item {padded} ({item_num}) not in any tab range")
+
+        return tabs
+
+    def _select_single_item(self, item_number: str):
+        """Select a single MBS item by navigating to the correct tab."""
+        padded = item_number.zfill(5)
+        log(f"Selecting MBS item: {padded}")
+
+        # Click the correct tab (re-fetches tabs fresh each time)
+        tabs = self._click_tab_for_item(padded)
+
+        # Find the checkbox for this item number
         try:
-            clear_btn = self.driver.find_element(By.ID, "guiForm:clearBtn")
-            self.driver.execute_script("arguments[0].click();", clear_btn)
+            self._click_item_checkbox(padded)
+            log(f"Selected MBS item: {padded}")
+        except (TimeoutException, NoSuchElementException):
+            # Item not found in expected tab — search all tabs
+            log(f"Item {padded} not found in expected tab, searching all tabs")
+            if not self._search_all_tabs(padded):
+                raise MbsCheckerError(
+                    f"Could not find MBS item {padded} in any tab"
+                )
+
+    def _click_item_checkbox(self, padded_item: str):
+        """Find and click the checkbox for a specific MBS item number."""
+        selectors = [
+            f"//label[normalize-space(text())='{padded_item}']",
+            f"//label[contains(text(), '{padded_item}')]",
+        ]
+
+        for xpath in selectors:
+            try:
+                label = self.driver.find_element(By.XPATH, xpath)
+                checkbox_id = label.get_attribute("for")
+                if checkbox_id:
+                    checkbox = self.driver.find_element(By.ID, checkbox_id)
+                    if not checkbox.is_selected():
+                        self.driver.execute_script(
+                            "arguments[0].scrollIntoView(true);", checkbox
+                        )
+                        time.sleep(0.2)
+                        self.driver.execute_script(
+                            "arguments[0].click();", checkbox
+                        )
+                    time.sleep(self.ajax_delay)
+                    return
+            except NoSuchElementException:
+                continue
+
+        # Fallback: checkbox next to text cell
+        try:
+            xpath = (f"//td[normalize-space(text())='{padded_item}']"
+                     f"/preceding-sibling::td//input[@type='checkbox']")
+            checkbox = self.driver.find_element(By.XPATH, xpath)
+            if not checkbox.is_selected():
+                self.driver.execute_script("arguments[0].click();", checkbox)
+            time.sleep(self.ajax_delay)
+            return
         except NoSuchElementException:
             pass
-        time.sleep(self.ajax_delay)
 
-    def _find_item_checkbox(self, item_number: str):
-        """Find the checkbox for a specific MBS item number."""
-        # Pad item number to match label format (e.g., "965" -> "00965")
-        padded = item_number.zfill(5)
+        raise NoSuchElementException(f"Checkbox for item {padded_item} not found")
 
-        # Try to find label with matching text, then get its associated checkbox
-        try:
-            label = self._wait(EC.presence_of_element_located((
-                By.XPATH,
-                f"//div[@id='guiForm:tabView']//label[contains(@class, 'label-normal') and normalize-space(text())='{padded}']"
-            )))
-            checkbox_id = label.get_attribute("for")
-            return self.driver.find_element(By.ID, checkbox_id)
-        except TimeoutException:
-            # Fallback: try with the original number format
-            label = self._wait(EC.presence_of_element_located((
-                By.XPATH,
-                f"//div[@id='guiForm:tabView']//label[contains(@class, 'label-normal') and normalize-space(text())='{item_number}']"
-            )))
-            checkbox_id = label.get_attribute("for")
-            return self.driver.find_element(By.ID, checkbox_id)
+    def _search_all_tabs(self, padded_item: str) -> bool:
+        """Search through all tabs to find and select an item.
+        Re-fetches tabs each iteration to avoid stale references."""
+        tabs = self._get_tab_ranges()
+        for i, tab in enumerate(tabs):
+            try:
+                # Re-fetch to avoid stale element after previous tab click
+                fresh_tabs = self._get_tab_ranges()
+                if i >= len(fresh_tabs):
+                    break
+                fresh_tabs[i]["element"].click()
+                time.sleep(self.ajax_delay)
+                self._click_item_checkbox(padded_item)
+                log(f"Found and selected {padded_item} in tab {tab['text']}")
+                return True
+            except (NoSuchElementException, TimeoutException):
+                continue
+        return False
 
     def submit_check(self):
         """Step 8: Click 'Check items' and handle confirmation dialog."""
@@ -268,6 +404,7 @@ class MbsChecker:
         items: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
         """Run the full check flow for a single patient."""
+        self.wait_for_page_ready()
         self.fill_patient_form(medicare_number, irn, first_name)
         self.select_mbs_items(items)
         self.submit_check()

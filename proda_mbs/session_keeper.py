@@ -1,15 +1,14 @@
 import threading
 import time
 
-import requests
-
 
 def log(msg: str):
     print(f"{time.strftime('%d/%m/%y %H:%M:%S')} {msg}")
 
 
 class SessionKeeper:
-    """Keeps the HPOS session alive by periodically pinging the server."""
+    """Keeps the HPOS session alive by periodically executing a JS fetch
+    through the Selenium browser, preserving the real session context."""
 
     KEEPALIVE_URL = (
         "https://www2.medicareaustralia.gov.au:5447"
@@ -22,7 +21,6 @@ class SessionKeeper:
         self._timer = None
         self._lock = threading.Lock()
         self._running = False
-        self._session = requests.Session()
 
     def start(self):
         """Start the keep-alive timer."""
@@ -36,7 +34,6 @@ class SessionKeeper:
         if self._timer:
             self._timer.cancel()
             self._timer = None
-        self._session.close()
         log("Session keeper stopped")
 
     def reset(self):
@@ -53,29 +50,32 @@ class SessionKeeper:
             self._timer.start()
 
     def _ping(self):
-        """Send a keep-alive request using the browser's session cookies."""
+        """Send a keep-alive request using the browser's JS context.
+        This ensures cookies, session state, and CSRF tokens are all valid."""
         if not self._running:
             return
 
         try:
             with self._lock:
-                # Sync cookies from the Selenium driver
-                self._session.cookies.clear()
-                for cookie in self.driver.get_cookies():
-                    self._session.cookies.set(
-                        cookie["name"],
-                        cookie["value"],
-                        domain=cookie.get("domain", ""),
-                    )
-
-                response = self._session.get(
-                    self.KEEPALIVE_URL, timeout=10, allow_redirects=False
-                )
-                if response.status_code == 200:
+                # Use JS fetch within the browser to keep the real session alive.
+                # This runs in the same browser context with all cookies/headers.
+                result = self.driver.execute_script(f"""
+                    try {{
+                        var xhr = new XMLHttpRequest();
+                        xhr.open('GET', '{self.KEEPALIVE_URL}', false);
+                        xhr.send();
+                        return xhr.status;
+                    }} catch(e) {{
+                        return -1;
+                    }}
+                """)
+                if result == 200:
                     log("Session keep-alive ping successful")
+                elif result == -1:
+                    log("Session keep-alive ping: JS error (may still be alive)")
                 else:
-                    log(f"Session keep-alive ping: status {response.status_code}")
-        except requests.RequestException as e:
+                    log(f"Session keep-alive ping: status {result}")
+        except Exception as e:
             log(f"Session keep-alive ping failed: {e}")
 
         self._schedule_next()
