@@ -8,7 +8,7 @@ proda:
 
 gmail:
   client_secret_path: "client_secret.json"   # Path to Google OAuth client secret
-  token_path: "token.pickle"                  # Path to cached OAuth token
+  token_path: "token.json"                    # Path to cached OAuth token (JSON format)
 
 mbs:
   provider_location: "8X"    # Provider location code
@@ -22,6 +22,7 @@ session:
   keepalive_interval_seconds: 300   # Keep-alive interval (5 minutes)
   page_load_timeout: 30             # Page load timeout in seconds
   element_wait_timeout: 15          # Element wait timeout in seconds
+  ajax_stability_delay: 1.0         # Delay between AJAX interactions in seconds
   retry_count: 3                    # Number of retries on failure
 
 browser:

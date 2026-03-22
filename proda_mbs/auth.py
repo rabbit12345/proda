@@ -6,7 +6,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 from .config import AppConfig
-from .gmail_otp import GmailOtpExtractor
+from .gmail_otp import GmailOtpExtractor, GmailAuthError
 
 
 def log(msg: str):
@@ -72,7 +72,7 @@ class ProdaAuthenticator:
             ).click()
             self._wait(EC.title_contains("2-step verification"))
             log("Reached 2-step verification page")
-        except TimeoutException:
+        except (TimeoutException, NoSuchElementException):
             raise LoginError(
                 "Did not reach 2-step verification page after login"
             )
@@ -102,11 +102,15 @@ class ProdaAuthenticator:
 
     def _retrieve_otp_from_gmail(self):
         log("Retrieving OTP from Gmail")
-        extractor = GmailOtpExtractor(self.config.gmail)
+        try:
+            extractor = GmailOtpExtractor(self.config.gmail)
+        except GmailAuthError as e:
+            raise LoginError(f"Gmail authentication failed: {e}")
+
         code = extractor.get_otp_code()
         if not code:
             raise LoginError("Could not retrieve OTP code from Gmail")
-        log(f"OTP code retrieved: {code}")
+        log("OTP code retrieved successfully")
         return code
 
     def _submit_otp(self, code: str):

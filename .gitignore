@@ -1,5 +1,6 @@
 # Credentials and tokens
 client_secret.json
+token.json
 token.pickle
 config.yaml
 
@@ -16,3 +17,4 @@ dist/
 __pycache__/
 *.pyc
 *.pyo
+.venv/

@@ -1,21 +1,21 @@
 import time
+import re
 from typing import List, Dict, Optional
 
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import (
-    TimeoutException,
-    NoSuchElementException,
-    StaleElementReferenceException,
-)
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 from .config import AppConfig
 
 
 def log(msg: str):
     print(f"{time.strftime('%d/%m/%y %H:%M:%S')} {msg}")
+
+
+MEDICARE_PATTERN = re.compile(r"^\d{10}$")
+IRN_PATTERN = re.compile(r"^\d$")
 
 
 class MbsCheckerError(Exception):
@@ -37,6 +37,19 @@ class MbsChecker:
         self, medicare_number: str, irn: str, first_name: str
     ):
         """Step 6: Fill the patient details form."""
+        # Validate inputs
+        if not MEDICARE_PATTERN.match(medicare_number):
+            raise MbsCheckerError(
+                f"Invalid Medicare number '{medicare_number}': "
+                "must be exactly 10 digits"
+            )
+        if not IRN_PATTERN.match(irn):
+            raise MbsCheckerError(
+                f"Invalid IRN '{irn}': must be a single digit"
+            )
+        if not first_name.strip():
+            raise MbsCheckerError("First name cannot be empty")
+
         log(f"Filling patient form: {first_name}")
 
         # Medicare card number
@@ -63,7 +76,6 @@ class MbsChecker:
             By.ID, "guiForm:gui_patientConsentGiven"
         )
         if not consent_cb.is_selected():
-            # Use JS click in case the checkbox is covered by another element
             self.driver.execute_script("arguments[0].click();", consent_cb)
 
         # Provider location dropdown
@@ -78,6 +90,9 @@ class MbsChecker:
         """Step 7: Select MBS items using the search field."""
         if items is None:
             items = self.config.mbs.items_to_check
+
+        if len(items) > 5:
+            raise MbsCheckerError("Maximum of 5 MBS items can be selected")
 
         log(f"Selecting MBS items: {items}")
 
@@ -106,11 +121,9 @@ class MbsChecker:
             time.sleep(0.3)
 
         # Wait for AJAX to update the tab view with filtered results
-        # Look for a label containing the full item number (with leading zeros)
         time.sleep(self.ajax_delay)
 
         # Find and click the checkbox for this item
-        # The label text contains the padded item number (e.g., "00965")
         try:
             checkbox = self._find_item_checkbox(item_number)
             if not checkbox.is_selected():
@@ -148,7 +161,6 @@ class MbsChecker:
                 By.XPATH,
                 f"//div[@id='guiForm:tabView']//label[contains(@class, 'label-normal') and normalize-space(text())='{padded}']"
             )))
-            # The checkbox ID comes from the label's "for" attribute
             checkbox_id = label.get_attribute("for")
             return self.driver.find_element(By.ID, checkbox_id)
         except TimeoutException:
@@ -164,10 +176,6 @@ class MbsChecker:
         """Step 8: Click 'Check items' and handle confirmation dialog."""
         log("Submitting check items")
 
-        # The Check items button appears in buttonsAndModal after items are selected
-        # For multiple items, we need to handle the confirmation dialog
-        # The hidden button gui_search3 is the actual submit trigger
-
         # First try: look for a visible "Check items" button
         try:
             check_btn = self._wait(EC.element_to_be_clickable((
@@ -177,9 +185,10 @@ class MbsChecker:
             check_btn.click()
         except TimeoutException:
             # Fallback: directly trigger the hidden button via JS
-            self.driver.execute_script(
-                "document.getElementById('guiForm:gui_search3').click();"
+            hidden_btn = self.driver.find_element(
+                By.ID, "guiForm:gui_search3"
             )
+            self.driver.execute_script("arguments[0].click();", hidden_btn)
 
         # Check if confirmation dialog appeared (for multiple items)
         time.sleep(self.ajax_delay)
@@ -188,7 +197,7 @@ class MbsChecker:
                 By.ID, "guiForm:multipleMBSItemsConfirmDiag"
             )
             if dialog.is_displayed():
-                log("Multiple items confirmation dialog appeared - clicking Continue")
+                log("Multiple items confirmation dialog - clicking Continue")
                 continue_btn = self._wait(EC.element_to_be_clickable((
                     By.CSS_SELECTOR,
                     "#guiForm\\:multipleMBSItemsConfirmDiag a.confirm-btn"
@@ -279,7 +288,6 @@ def format_results(
 
     for r in results:
         response = r["response"]
-        # Truncate long response text for display
         if len(response) > 50:
             response = response[:47] + "..."
         lines.append(f"{r['mbs_item']:<12} {r['claimable']:<15} {response}")

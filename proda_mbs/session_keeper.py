@@ -22,6 +22,7 @@ class SessionKeeper:
         self._timer = None
         self._lock = threading.Lock()
         self._running = False
+        self._session = requests.Session()
 
     def start(self):
         """Start the keep-alive timer."""
@@ -35,6 +36,7 @@ class SessionKeeper:
         if self._timer:
             self._timer.cancel()
             self._timer = None
+        self._session.close()
         log("Session keeper stopped")
 
     def reset(self):
@@ -57,24 +59,23 @@ class SessionKeeper:
 
         try:
             with self._lock:
-                # Extract cookies from the Selenium driver
-                selenium_cookies = self.driver.get_cookies()
-                session = requests.Session()
-                for cookie in selenium_cookies:
-                    session.cookies.set(
+                # Sync cookies from the Selenium driver
+                self._session.cookies.clear()
+                for cookie in self.driver.get_cookies():
+                    self._session.cookies.set(
                         cookie["name"],
                         cookie["value"],
                         domain=cookie.get("domain", ""),
                     )
 
-                # Make a lightweight GET request to keep the session alive
-                response = session.get(self.KEEPALIVE_URL, timeout=10)
+                response = self._session.get(
+                    self.KEEPALIVE_URL, timeout=10, allow_redirects=False
+                )
                 if response.status_code == 200:
                     log("Session keep-alive ping successful")
                 else:
-                    log(f"Session keep-alive ping returned {response.status_code}")
-        except Exception as e:
+                    log(f"Session keep-alive ping: status {response.status_code}")
+        except requests.RequestException as e:
             log(f"Session keep-alive ping failed: {e}")
 
-        # Schedule the next ping
         self._schedule_next()

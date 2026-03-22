@@ -1,7 +1,8 @@
 import argparse
 import sys
+import time
 
-from .config import load_config, create_driver
+from .config import load_config, create_driver, ConfigError
 from .auth import ProdaAuthenticator, LoginError
 from .navigator import HposNavigator, NavigationError
 from .mbs_checker import MbsChecker, MbsCheckerError, format_results
@@ -9,7 +10,6 @@ from .session_keeper import SessionKeeper
 
 
 def log(msg: str):
-    import time
     print(f"{time.strftime('%d/%m/%y %H:%M:%S')} {msg}")
 
 
@@ -89,7 +89,12 @@ def main():
     args = parser.parse_args()
 
     # Load config
-    config = load_config(args.config)
+    try:
+        config = load_config(args.config)
+    except ConfigError as e:
+        log(f"Configuration error: {e}")
+        sys.exit(1)
+
     if args.browser:
         config.browser.type = args.browser
     if args.headless:

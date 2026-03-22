@@ -16,7 +16,7 @@ class ProdaConfig:
 @dataclass
 class GmailConfig:
     client_secret_path: str = "client_secret.json"
-    token_path: str = "token.pickle"
+    token_path: str = "token.json"
     scopes: List[str] = field(default_factory=lambda: [
         "https://www.googleapis.com/auth/gmail.modify"
     ])
@@ -54,13 +54,17 @@ class AppConfig:
     browser: BrowserConfig = field(default_factory=BrowserConfig)
 
 
+class ConfigError(Exception):
+    """Raised when configuration is invalid or missing."""
+    pass
+
+
 def load_config(config_path: Optional[str] = None) -> AppConfig:
     """Load configuration from YAML file with environment variable fallback."""
     config = AppConfig()
 
     # Try to load YAML config
     if config_path is None:
-        # Look for config.yaml in the package's parent directory
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         config_path = os.path.join(base_dir, "config.yaml")
 
@@ -96,6 +100,9 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
         config.session.element_wait_timeout = session.get(
             "element_wait_timeout", config.session.element_wait_timeout
         )
+        config.session.ajax_stability_delay = session.get(
+            "ajax_stability_delay", config.session.ajax_stability_delay
+        )
         config.session.retry_count = session.get(
             "retry_count", config.session.retry_count
         )
@@ -117,7 +124,33 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
     if not os.path.isabs(config.gmail.token_path):
         config.gmail.token_path = os.path.join(base_dir, config.gmail.token_path)
 
+    # Validate required fields
+    _validate_config(config)
+
     return config
+
+
+def _validate_config(config: AppConfig):
+    """Validate that required configuration fields are present."""
+    if not config.proda.username:
+        raise ConfigError(
+            "PRODA username is required. Set in config.yaml or "
+            "PRODA_USERNAME environment variable."
+        )
+    if not config.proda.password:
+        raise ConfigError(
+            "PRODA password is required. Set in config.yaml or "
+            "PRODA_PASSWORD environment variable."
+        )
+    if config.browser.type not in ("firefox", "chrome"):
+        raise ConfigError(
+            f"Invalid browser type '{config.browser.type}'. "
+            "Must be 'firefox' or 'chrome'."
+        )
+    if not config.mbs.items_to_check:
+        raise ConfigError("At least one MBS item must be configured.")
+    if len(config.mbs.items_to_check) > 5:
+        raise ConfigError("Maximum of 5 MBS items can be checked at once.")
 
 
 def create_driver(browser_config: BrowserConfig) -> webdriver.Remote:
@@ -125,7 +158,7 @@ def create_driver(browser_config: BrowserConfig) -> webdriver.Remote:
     if browser_config.type.lower() == "chrome":
         options = webdriver.ChromeOptions()
         if browser_config.headless:
-            options.add_argument("--headless")
+            options.add_argument("--headless=new")
         return webdriver.Chrome(options=options)
     else:
         options = webdriver.FirefoxOptions()
