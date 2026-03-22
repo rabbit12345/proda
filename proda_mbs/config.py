@@ -152,6 +152,22 @@ def _validate_config(config: AppConfig):
     if len(config.mbs.items_to_check) > 5:
         raise ConfigError("Maximum of 5 MBS items can be checked at once.")
 
+    # Gmail auth: need either token.json OR client_secret.json (for first-time setup)
+    has_token = os.path.exists(config.gmail.token_path)
+    has_secret = os.path.exists(config.gmail.client_secret_path)
+    if not has_token and not has_secret:
+        raise ConfigError(
+            "Gmail authentication not configured.\n"
+            f"  Neither token file nor client secret found:\n"
+            f"    token:  {config.gmail.token_path}\n"
+            f"    secret: {config.gmail.client_secret_path}\n"
+            f"  \n"
+            f"  For first-time setup, place client_secret.json from\n"
+            f"  Google Cloud Console (Gmail API, OAuth Desktop client)\n"
+            f"  at the path above. A token.json will be created after\n"
+            f"  the first successful login."
+        )
+
 
 def create_driver(browser_config: BrowserConfig) -> webdriver.Remote:
     """Create a Selenium WebDriver instance based on config."""
