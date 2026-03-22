@@ -1,0 +1,85 @@
+Delivered-To: jay@powerun.com
+Received: by 2002:a05:622a:53:b0:509:1c48:aa16 with SMTP id y19csp145200qtw;
+        Sat, 21 Mar 2026 15:59:18 -0700 (PDT)
+X-Received: by 2002:a17:90b:1dc1:b0:35b:af3f:3618 with SMTP id 98e67ed59e1d1-35bd2d6506amr6530371a91.28.1774133958537;
+        Sat, 21 Mar 2026 15:59:18 -0700 (PDT)
+ARC-Seal: i=1; a=rsa-sha256; t=1774133958; cv=none;
+        d=google.com; s=arc-20240605;
+        b=aEf0KYx6POOhTast7YaZPDj7V02Z1kTMPdVEIy7EZw9fr8lBqEWqkPY5VyHNtWIo9z
+         ClL7kYfuPHwjkDss2XNrm+fDKmtOyFbkGnXl3QzU0iy2TqUOYxgHLkixd4G/LkEZjSvN
+         BKfIaLp8gsatv6hqCbh0Pil6gAZmVkVHbvJ91r955HTTtwUL++Ys0Zh+/Bv8uhAZnHtr
+         77/LnzaTyXhZLvWqjhkQFrRk84PfAqAIIK37jiPywMP0zwhYcHq4FSEtcbgqv9wmpEn+
+         5W5O6nKSP+Kc0mRS1zDfE3SlzLJsGUOkddc3grYttt0ThiKYIDnZ/tWQFhMlriBBuGD8
+         6hyQ==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20240605;
+        h=content-transfer-encoding:mime-version:subject:message-id:to:from
+         :date:dkim-signature;
+        bh=GKos8WbN9+zYlb1HS0RXyOl9LcY7qSdSsafVM3HPrJw=;
+        fh=7m2EwQ5z7Xm6EwdWjUdJZb4iaIUfeQDlI2KmJfUfoLg=;
+        b=dlbTjpXpit+Zw8tK/UvV0eyIi6yotcUL4afptU3DDk6iabGs70/dx3GQskxfZRvYpz
+         dGbeLlUw3t+t8cpgYPE17HVWwX6wNU1JlA+cL4v4OaTfPSQ4dMXhRYtnHYUAbS+rjiHY
+         X5cyx3xUmjfHx69noH91/IpdotgW5C5lmodSdipPjrzi4Z80bpyEDxmuBjM/V/0xRfA/
+         C7bIuRhP7krliptUsTYP1I1VjvgcthzO00mM6gHlMprp7S9Lwfb01Fo0TSEYQJEseeha
+         R4u0qCQUnaP+b93uacQSrvQIldy/AOWn4dHM/Y6tlXEu3FwIVq+AiYV8GgFNigNJnPhj
+         KzJw==;
+        dara=google.com
+ARC-Authentication-Results: i=1; mx.google.com;
+       dkim=pass header.i=@servicesaustralia.gov.au header.s=proda header.b=QqvPti7X;
+       spf=pass (google.com: domain of proda@servicesaustralia.gov.au designates 203.13.3.126 as permitted sender) smtp.mailfrom=proda@servicesaustralia.gov.au;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=servicesaustralia.gov.au
+Return-Path: <proda@servicesaustralia.gov.au>
+Received: from outmx20.humanservices.gov.au (outmx20.humanservices.gov.au. [203.13.3.126])
+        by mx.google.com with ESMTPS id 98e67ed59e1d1-35bc617c65bsi16255640a91.18.2026.03.21.15.59.18
+        for <jay@powerun.com>
+        (version=TLS1_2 cipher=ECDHE-ECDSA-AES128-GCM-SHA256 bits=128/128);
+        Sat, 21 Mar 2026 15:59:18 -0700 (PDT)
+Received-SPF: pass (google.com: domain of proda@servicesaustralia.gov.au designates 203.13.3.126 as permitted sender) client-ip=203.13.3.126;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@servicesaustralia.gov.au header.s=proda header.b=QqvPti7X;
+       spf=pass (google.com: domain of proda@servicesaustralia.gov.au designates 203.13.3.126 as permitted sender) smtp.mailfrom=proda@servicesaustralia.gov.au;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=servicesaustralia.gov.au
+Received: from dcvsms857.csda.gov.au (dcvglb32-vlan512.dhs.gwy [172.20.128.142])
+	by outmx20.humanservices.gov.au (Postfix) with ESMTPA id D5D6D1FE6F
+	for <jay@powerun.com>; Sun, 22 Mar 2026 09:59:15 +1100 (AEDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/simple;
+	d=servicesaustralia.gov.au; s=proda; t=1774133955;
+	bh=24hc+rIG/OMUzxPIY5eVrCbG8xuHaEftqqJD7W0f55I=;
+	h=Date:From:To:Subject;
+	b=QqvPti7XOKYatS37N0edmUqQFhn8qDi7c+gq3uQgrXIrKMamnHZiLfr9RPpYKh3IN
+	 HIK4Qb56j46OjB7frGGAc+7/nMxaJDeuqv2S7oFNl02Lv+5jZBlqSdTB2X4tZ1dGui
+	 Fjtp6WsATHJJX9y7+0hfewyQyCVT8mEDBpip9nZtRwlD/cIrX+j+vl3GStNk1LPDj8
+	 pgpGlH2dIbBSMF8Mb4j81Taq/gQfhs5YO24BYCcj17Pil/Acz5F5UJNpPd46H3dppj
+	 rbzgkEobD61eaAJsj7EYIbPx7lSwLetTPXPgcMQIGG/RWkVgD7FI0fjSq1yhtm6Nvp
+	 NKaZLxx7Tiy+Q==
+Date: Sun, 22 Mar 2026 09:59:15 +1100 (AEDT)
+From: proda@servicesaustralia.gov.au
+To: jay@powerun.com
+Message-ID: <-333183876.662306.1774133955793@dcvsms857.csda.gov.au>
+Subject:             Your PRODA verification code [SEC=OFFICIAL]
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+
+        
+    <html>
+<head>
+<style>
+body {
+    font-family: Arial;
+    font-size: 11pt;
+    line-height: 1;
+}
+
+p.disclaimer {
+    color: red;
+}
+</style>
+</head>
+<body>
+<p class="disclaimer">This message is from Services Australia. This is an automated email. Please don't reply.</p> <br> <p>To access your PRODA account, please enter your verification code.</p> <p>Your Provider Digital Access (PRODA) verification code is <strong>832070</strong></p>
+<p>This code will expire in 10 minutes. If it expires, you'll need to request another verification code.</p> <p><strong>Help and more information</strong><br> If you need help with PRODA or have received this email in error, please call us on 1800&nbsp;700&nbsp;199 and select option 1. Call costs from your landline from anywhere in Australia to a 1800 number are free.</p> <p>For more information about PRODA, please go to servicesaustralia.gov.au/proda</p>
+</body>
+</html>
+        
+        

@@ -1,0 +1,29 @@
+# PRODA MBS Checker Configuration
+# Copy this file to config.yaml and fill in your credentials
+
+proda:
+  username: ""          # Your PRODA username
+  password: ""          # Your PRODA password
+  url: "https://proda.humanservices.gov.au/"
+
+gmail:
+  client_secret_path: "client_secret.json"   # Path to Google OAuth client secret
+  token_path: "token.pickle"                  # Path to cached OAuth token
+
+mbs:
+  provider_location: "8X"    # Provider location code
+  items_to_check:            # MBS item numbers to check
+    - "00965"
+    - "00967"
+    - "2715"
+    - "2717"
+
+session:
+  keepalive_interval_seconds: 300   # Keep-alive interval (5 minutes)
+  page_load_timeout: 30             # Page load timeout in seconds
+  element_wait_timeout: 15          # Element wait timeout in seconds
+  retry_count: 3                    # Number of retries on failure
+
+browser:
+  type: "firefox"       # "firefox" or "chrome"
+  headless: false       # Run browser in headless mode

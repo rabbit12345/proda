@@ -1,0 +1,610 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd" >
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en"><head id="j_id644929430_21ac1371">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+		<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta http-equiv="Cache-Control" content="no-store" />
+		<title>MBS Items Online Checker
+		</title>
+
+	<script type="text/javascript" src="/pcert/hpos/ruxitagentjs_ICANVfgqrux_10331260218130851.js" data-dtconfig="app=65ac0d509da6129b|ssc=1|owasp=1|featureHash=ICANVfgqrux|rdnt=1|uxrgce=1|bp=3|cuc=gpalpirq|mel=100000|dpvc=1|ssv=4|lastModification=1773963932632|tp=500,50,0|srbbv=2|agentUri=/hpos/ruxitagentjs_ICANVfgqrux_10331260218130851.js|reportUrl=/pcert/hpos/dynatrace/rb_6de8e2e9-6719-45b3-86be-7effcb9f6525|rid=RID_-671596965|rpid=-915105313"></script><link rel="stylesheet" href="/pcert/hpos/common/new/css/font.css" />
+	
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/bootstrap.min.css" />
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/theme.css" />
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/header.css" />
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/aux-functions.css" />
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/footer.css" />
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/go-top-nav.css" />
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/header-wHPOS.css" />
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/hpos.css" />	
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/bootstrap-datetimepicker.css" />
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/feedback.css" />
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/bootstrap-glyphicon.css" />
+	<link rel="stylesheet" href="/pcert/hpos/common/new/css/glyphicons.css" />
+	<link rel="stylesheet" href="/pcert/hpos/common/css/print.css" media="print" /><link rel="stylesheet" media="screen" type="text/css" href="../../hpos/javax.faces.resource/components.css.xhtml?ln=primefaces&amp;v=6.2" />
+ 	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	<!--[if LTE IE 8]>	<script src="../js/respond.min.js"></script> <![endif]-->
+	
+
+	
+	<!-- off canvas vertical menu end -->
+	
+	<!--[if lte IE 9]><link rel="stylesheet" type="text/css" href="/hpos/common/new/css/ie9-menu.css"><![endif]-->
+	
+	<title>MBS Items Online Checker</title>
+		
+	<style type="text/css">
+		.ui-dialog {
+			border: 1px #ccc solid !important;
+		}
+		.ui-dialog .ui-dialog-titlebar {
+			background: none repeat scroll 0 0 #e8eff2 !important;
+			color:	#044b70;
+		}
+		.ui-dialog .ui-dialog-content {
+			background: none repeat scroll 0 0 white !important;
+			color:	#000000;
+			overflow-y: hidden !important;
+		}
+
+		.hposGrid {
+				width:80% !important;
+				font: 1em Arial,Helvetica,sans-serif;
+				background: transparent !important;
+				empty-cells:show;
+		}
+			
+		.hposGrid table {
+				empty-cells:show !important;
+		}
+			
+ 		.label-bold {
+ 				font-style: normal !important;
+ 				font-weight: bold !important;
+		} 
+			
+		.label-normal{
+			    display:inline !important;
+			    float:none !important;
+			    font-weight:normal !important;
+			    font-style: normal !important;
+			    clear: none !important;
+			    width:50% !important;
+		}
+		
+	.ui-icon-triangle-1-e {
+width: 55px ;
+height: 55px ;
+background-image: url("/hpos/common/images/box-list2.gif");
+}
+
+	.ui-icon-triangle-1-s {
+width: 55px ;
+height: 55px ;
+background-image: url("/hpos/common/images/box-list2.gif");
+}
+
+.ui-state-active{
+	 background: none;
+}
+
+.ui-state-default{
+	 background: #85B2CB -webkit-gradient(linear, left top, left bottom, from(rgba(220, 237, 237, 10)), to(rgba(250, 250, 250, 255))); 
+
+}
+
+.planRadio input[type="radio"] {
+	margin-right: 5px !important;
+	border: none !important;
+}
+
+.planRadio label {
+	font-weight: normal !important;
+	display: inline !important;
+}
+
+.custom-button .ui-button-text {
+	padding: 0 !important;
+}
+
+.column-left {
+	width: 25%;
+}
+.column-right {
+	width: 75%;
+}
+.ui-tooltip {
+	width: 200px;
+	word-wrap: break-word;
+	font-size: 10px;
+}
+
+.ui-tooltip .ui-tooltip-text {
+	background-color: #FFFFFF !important;
+	color: #000000 !important;
+}
+
+.ui-shadow {
+	box-shadow: none !important;
+}
+#mbs ol li a:link {
+padding:10px;
+color: black;
+margin-left: 22px;
+}
+
+#mbs tr {
+background-color: transparent;
+}
+
+#mbs td {
+border-top: none !important;
+}
+
+
+.ui-accordion-header a {
+font-style: normal;
+font-weight: normal;
+color: black;
+}
+		.fielderror {
+    			color: red;
+		}
+		
+		.ie6Disp{
+		display: none;
+		}
+		
+		.hidden{
+		display:none !important;
+		}
+		
+		.show{
+		display:block !important;
+		}
+		
+		.test{
+		margin-right: 30
+		}
+		
+		.ui-state-active {
+		background: #DCE4E7 !important;
+		
+		}
+		
+		.ui-state-default{
+		background: #efefef;				
+		}
+				
+		.ui-tabs-nav li{
+			padding: 1px 10px 1px 10px !important;	
+		 	border: 3px solid #DCE4E7 !important;
+		 	border-bottom: 1px solid #dddddd !important; 
+		 	border-top-left-radius: 6px;
+    		border-top-right-radius: 6px;
+		}
+		
+		.ui-tabs-nav{
+			padding: 0px 0px 0px 0px !important;
+		}
+		
+		#mbs table{
+		border:1px solid #DCE4E7 !important;
+		}
+		
+		.ui-tabs .ui-tabs-panel{
+			border-width: 0;
+			padding: 1px 1px 1px 2px !important;
+			background: #DCE4E7 !important;
+		}
+}
+				
+	</style>
+	
+	<!--[if lte IE 6]>
+	<style type="text/css">
+		.diss{
+			display: none !important;
+		}
+		
+		.ie6Disp{
+		display: inLine !important;
+	</style>
+<![endif]-->
+
+
+    </head><body>
+    								
+	
+	<div id="site-wrapper">
+		<div id="site-canvas">
+
+	
+
+	<div id="site-menu">
+		<div class="site-menu-container" style="display:none">
+			<a href="javascript:void(0)" title="Menu" id="menuLink" class="toggle-nav menu-close-link menu">MENU</a> <a href="javascript:void(0)" title="Close menu" id="menuCloseLink" class="toggle-nav glyphicon glyphicon-remove menu-close"></a>
+
+
+			<div class="site-menu-menu">
+				<!-- site-menu-menu start -->
+				<br /><hr class="hr-vert-menu"/>
+<div class="vert-menu-block">
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MAILCENTRE" title="View and manage mail, notifications and statements sent to you "><div class="vert-menu-cat">
+<div style='text-align: right;margin-right: 0.4em;'>Messages <span class="num-msg cntMailCentre"></span> </div></div><!-- vert-menu-cat -->
+</a>
+</div><!-- vert-menu-block -->
+<hr class="hr-vert-menu"/>
+<div class="vert-menu-block">
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.HOME" title="Home"><div class="vert-menu-cat">
+<img src="/pcert/hpos/common/new/images/menu-icons/icon-menu-home.png" alt="" class="vert-menu-img"/><span style='margin-left: 0.762em;' class="white-text">Home</span></div><!-- vert-menu-cat -->
+</a>
+</div><!-- vert-menu-block -->
+
+<hr class="hr-vert-menu"/>
+<div class="vert-menu-block">
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.PRODA.MANAGEACC" title="Manage logon account"><div class="vert-menu-cat">
+<img src="/pcert/hpos/common/new/images/menu-icons/icon-menu-manageacc.png" alt="" class="vert-menu-img"/><span style='margin-left: 0.762em;' class="white-text">Manage logon account</span></div><!-- vert-menu-cat -->
+</a>
+</div><!-- vert-menu-block -->
+
+<hr class="hr-vert-menu"/>
+<div class="vert-menu-block">
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.FINDAPATIENT" title="Find a patient"><div class="vert-menu-cat">
+<img src="/pcert/hpos/common/new/images/menu-icons/icon-menu-findapatient.png" alt="" class="vert-menu-img"/><span style='margin-left: 0.762em;' class="white-text">Find a patient</span></div><!-- vert-menu-cat -->
+</a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.PV.MULTREQUEST" title="Check Medicare card details for multiple patients" class="item-link"> <span class="vert-menu-item">Multiple Details Request</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.PV.VIEWHISTORY" title="View patient care plan history" class="item-link"> <span class="vert-menu-item">View patient care plan history</span></a>
+</div><!-- vert-menu-block -->
+
+
+<hr class="hr-vert-menu"/>
+<div class="vert-menu-block">
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MYPROGRAMS" title="My programs"><div class="vert-menu-cat">
+<img src="/pcert/hpos/common/new/images/menu-icons/icon-menu-myprograms.png" alt="" class="vert-menu-img"/><span style='margin-left: 0.762em;' class="white-text">My programs</span></div><!-- vert-menu-cat -->
+</a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.CTG" title="Closing the Gap PBS Co-Payment Register" class="item-link"> <span class="vert-menu-item">Closing the Gap PBS Co-Payment Register</span></a>
+</div><!-- vert-menu-block -->
+
+
+<hr class="hr-vert-menu"/>
+<div class="vert-menu-block">
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.ITEMS" title="Items"><div class="vert-menu-cat">
+<img src="/pcert/hpos/common/new/images/menu-icons/icon-menu-items.png" alt="" class="vert-menu-img"/><span style='margin-left: 0.762em;' class="white-text">Items</span></div><!-- vert-menu-cat -->
+</a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MBSIOC" title=" Confirm a patient's eligibility for items with restrictions" class="item-link"> <span class="vert-menu-item">MBS items online checker </span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.RESOURCES.MBSONLINE" target="_blank" title=" Medicare Benefits Schedule online" class="item-link"> <span class="vert-menu-item">MBS online </span><span class="sr-only">Opens new window</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.RESOURCES.PPCALCULATOR" title="MBS partial payment calculator" class="item-link"> <span class="vert-menu-item">MBS partial payment calculator</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.RESOURCES.PBSSONLINE" target="_blank" title=" Pharmaceutical Benefits Scheme online" class="item-link"> <span class="vert-menu-item">PBS schedule </span><span class="sr-only">Opens new window</span></a>
+</div><!-- vert-menu-block -->
+
+
+<hr class="hr-vert-menu"/>
+<div class="vert-menu-block">
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.CLAIMS" title="Claims"><div class="vert-menu-cat">
+<img src="/pcert/hpos/common/new/images/menu-icons/icon-menu-claims.png" alt="" class="vert-menu-img"/><span style='margin-left: 0.762em;' class="white-text">Claims</span></div><!-- vert-menu-cat -->
+</a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.CLAIMS.NEWCLAIM" title="Make a new claim" class="item-link"> <span class="vert-menu-item">Make a new claim</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.CLAIMS.VIEWSAVEDCLAIMS" title="View saved claims" class="item-link"> <span class="vert-menu-item">View saved claims</span></a>
+</div><!-- vert-menu-block -->
+
+
+<hr class="hr-vert-menu"/>
+<div class="vert-menu-block">
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.REPORTS" title="Reports"><div class="vert-menu-cat">
+<img src="/pcert/hpos/common/new/images/menu-icons/icon-menu-reports.png" alt="" class="vert-menu-img"/><span style='margin-left: 0.762em;' class="white-text">Reports</span></div><!-- vert-menu-cat -->
+</a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.REPORTS.PC" title="Medicare Patient Claim Webclaim reports" class="item-link"> <span class="vert-menu-item">Medicare Patient Claim Webclaim reports</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MSERVICES.PROCREPORT" title="Medicare Bulk Bill reports" class="item-link"> <span class="vert-menu-item">Medicare Bulk Bill reports</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.REPORTS.DVAMEDICALWEBCLAIMS" title="DVA Webclaim reports" class="item-link"> <span class="vert-menu-item">DVA Webclaim reports</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.PSIP.PATREPORT" title="Prescription Shopping Patient Summary reports" class="item-link"> <span class="vert-menu-item">Prescription Shopping Patient Summary reports</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.DVA.PATTREPORT" title="DVA Patient Treatment reports" class="item-link"> <span class="vert-menu-item">DVA Patient Treatment reports</span></a>
+</div><!-- vert-menu-block -->
+
+
+<hr class="hr-vert-menu"/>
+<div class="vert-menu-block">
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MYDETAILS" title="My details"><div class="vert-menu-cat">
+<img src="/pcert/hpos/common/new/images/menu-icons/icon-menu-mydetails.png" alt="" class="vert-menu-img"/><span style='margin-left: 0.762em;' class="white-text">My details</span></div><!-- vert-menu-cat -->
+</a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MYDETAILS.MYPERSDTLS" title="View and manage your details" class="item-link"> <span class="vert-menu-item">My personal details</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MYDETAILS.MYPROVNUMDTLS" title="View and manage your provider number details" class="item-link"> <span class="vert-menu-item">My provider numbers</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MYDELGATES" title="View and manage your delegates" class="item-link"> <span class="vert-menu-item">My delegates</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.FORMS" target="_blank" title="My forms" class="item-link"> <span class="vert-menu-item">My forms</span><span class="sr-only">Opens new window</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MYDETAILS.MYACCESSHISTORY" title="My access history" class="item-link"> <span class="vert-menu-item">My access history</span></a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MYDETAILS.MYOHPDR" title="My digital specialist recognition" class="item-link"> <span class="vert-menu-item">My digital specialist recognition</span></a>
+</div><!-- vert-menu-block -->
+
+
+<hr class="hr-vert-menu"/>
+<div class="vert-menu-block">
+<a href='/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.INFO' target='_blank' title='Get further information about HPOS services and Health programs'><span class="sr-only">Opens new window</span><div class="vert-menu-cat">
+<img src="/pcert/hpos/common/new/images/menu-icons/icon-menu-info.png" alt="" class="vert-menu-img"/><span style='margin-left: 0.762em;' class="white-text">Info</span></div><!-- vert-menu-cat -->
+</a>
+</div><!-- vert-menu-block -->
+
+<hr class="hr-vert-menu"/>
+<div class="vert-menu-block">
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.PROFORMA" title="Forms"><div class="vert-menu-cat">
+<img src="/pcert/hpos/common/new/images/menu-icons/icon-menu-proforma.png" alt="" class="vert-menu-img"/><span style='margin-left: 0.762em;' class="white-text">Forms</span></div><!-- vert-menu-cat -->
+</a>
+
+<a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.PROFORMA.FORMUPLOAD" title="Secure Form Upload" class="item-link"> <span class="vert-menu-item">Secure Form Upload</span></a>
+</div><!-- vert-menu-block -->
+
+
+
+			</div>
+			<!-- site-menu-menu end -->
+
+
+		</div>
+		<!--  .site-menu-container -->
+	</div>
+	<!--  #site-menu -->
+
+	
+
+	<nav class="navbar navbar-inverse navbar-fixed-top template-header">
+				<div class="container-fluid">
+					<div class="row">
+						<div class="navbar-header">
+							<div class="col-xs-12" id="nav-header">
+									<a title="Menu" href="javascript:void(0)" id="menuIcon" class="navbar-brand hidden-xs dropdown-toggle toggle-nav">
+										<span class="sr-only">Menu press enter to expand</span> </a>
+								
+								<!-- h2 following h1 just to make the page WCAG compliance -->
+									
+								<div class="logo-program-wrapper">
+									<span class="logo"> <span class="sr-only">logo</span>
+									 <img src="/pcert/hpos/common/new/images/header/hpos-title-logo.png" title="Health Professional Online Services" alt="Health Professional Online Services" class="hpos-logo" />
+									</span>
+								</div>
+							</div>
+							<!-- col-xs-12 -->
+
+						</div>
+						<!-- navbar header -->
+
+
+						<div id="login-info" class="hidden-xs" style="width: 50% !important">
+      
+	<span class="client-details-wrapper">	
+		<span class="hpos-client-name">Jay Lin</span>				 
+	</span>
+						</div>
+						<div id="logout-panel"><a href="/pcert/hpos/faces/logout.xhtml" id="logoutLink" name="logoutLink" class="logout">
+									<img src="/pcert/hpos/common/new/images/header/logout.png" title="LOG OUT" alt="Log out" class="logout-image" /></a>
+						</div>
+
+					</div>
+					<!-- .row -->
+				</div>
+				<!-- .container-fluid -->
+			</nav>
+			<!-- .navbar -->
+<div style="background-color: transparent;">
+<!-- start right side navigation -->
+			<div class="aux-functions hidden-xs">
+				<ul class="list-unstyled">
+					<li><a href="javascript:void(0)" class="floating-help" title="Help" data-toggle="offcanvas" tabIndex="300"><span class="hidden">Help</span>
+					</a>
+					</li>
+					<li><a href="javascript:void(0)" title="Print" class="floating-print print-link" tabIndex="303"><span class="hidden">Print</span>
+					</a>
+					</li>
+					<li><a href="https://www.servicesaustralia.gov.au/health-professionals-feedback-and-complaints" target="blank" title="Feedback" class="floating-feedback feedback-link" tabIndex="304">
+							<span class="sr-only">Feedback. Opens new window</span>
+					</a>
+					</li>
+							<li><a href="javascript:void(0)" title="Favourites" class="floating-favourites " tabIndex="305"><span class="hidden">Favourites</span>
+							</a>
+							</li>
+					
+				</ul>
+			</div>
+			<div class="right-drawer hidden-xs">
+				<div class="drawer-help helpContent">
+					<div class="hpos-aux-head-wrapper-edit">
+						<h1 class="h3 hpos-aux-head">Help</h1> <span class="close-x" tabIndex="301">Close
+							<strong>X</strong>
+							<span class="sr-only">Close help</span>							
+						</span>
+					</div>
+					<!--  This content is loaded dynamically by javascript.  
+						  See the init() method in plugins.js.  The script just loads the
+						  url contained within the element below inside a div. -->
+						<div class="action-button">
+						</div><span id="helpContentsUrl" class="hidden">/hpos/common/newIncludes/help.xhtml?pageId=MBS_ITEM_CHECKER</span>
+					
+						<div class="panel-group" id="accordion">
+							
+							
+							<!-- START Bootstrap Accordion --><div class="panel panel-default" style="margin-bottom: 0px">
+								<div class="panel-heading">
+									<h2 class="panel-title" id="help_using_online_services">
+											Online Services 
+									</h2>
+								</div>
+								<div id="collapseOne" class="panel-collapse collapse in">
+									<div class="panel-body" id="helpContents">
+									</div>
+								</div>
+							</div>
+					</div>
+						
+					<!-- END Bootstrap Accordion -->
+				</div>
+				<!-- drawer-help end -->
+
+				<div class="drawer-print" style="display: none;"></div>
+
+	<div class="drawer-favourites">
+
+		<div class="hpos-aux-head-wrapper-edit">
+			<h1 class="h3 hpos-aux-head">Favourites</h1> <span class="close-x" tabIndex="306">Close <strong>X</strong> <span class="sr-only">Close favourites</span> </span>
+		</div><form id="myFavoritesForm" name="myFavoritesForm" method="post" action="../../hpos/faces/mbsItemChecker.xhtml" enctype="application/x-www-form-urlencoded">
+				<div class="favourites">
+					<div class="list-group"><div id="myFavoritesForm:j_id1537610728_f51f30a" class="ui-datalist ui-widget favlistStyle"><div id="myFavoritesForm:j_id1537610728_f51f30a_content" class="ui-datalist-content ui-widget-content"><ul id="myFavoritesForm:j_id1537610728_f51f30a_list" class="ui-datalist-data ui-datalist-nobullets" type="none"><li class="ui-datalist-item"><a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.ACIR" class="ui-link ui-widget" tabindex="307" target="_top" title="Australian Immunisation Register (AIR)">Australian Immunisation Register (AIR)</a></li><li class="ui-datalist-item"><a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.CLAIMS.NEWCLAIM.MEDICAREBULKBILL" class="ui-link ui-widget" tabindex="307" target="_top" title="Make a new claim - Bulk Bill Webclaim">Make a new claim - Bulk Bill Webclaim</a></li><li class="ui-datalist-item"><a href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MBSIOC" class="ui-link ui-widget" tabindex="307" target="_top" title="MBS items online checker">MBS items online checker</a></li></ul></div></div>
+					</div>
+				</div>
+				<div class="action-button"><a id="myFavoritesForm:Edit" href="/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MYFAVS.EDIT" class="ui-link ui-widget btn btn-primary btn-fav-adjust btn-action-edit" tabindex="307" target="_top">Edit</a>
+
+				</div><input type="hidden" name="myFavoritesForm_SUBMIT" value="1" /><input type="hidden" name="javax.faces.ViewState" id="javax.faces.ViewState" value="evNaSVA1tQuaohtPdSY3g+rJUImjPovvE3oAGOuewG3OlrW+ylt+a1AVg4TOCy+FAyX8/LeKs2bEFnhicToCGjS5wKJ6DCfWMfuhT1RdqYZNNtGcziqRSjoi0X4n+B1yTtRnIGssdFZLlpWORfp+WI0fWoZpTJX7g7Q9lw==" /></form>
+
+	</div>
+	<!-- end drawer favourites -->
+</div>
+</div>
+		
+
+		
+		
+		<div class="container-wrapper">
+			<div class="container wrap" style="width: 95%">					
+					<div id="containerInner" class="row">
+						
+						<div id="breadcrumbs">
+			   <div class="hpos-crumb-spacer">
+
+				   <ol class="breadcrumb" style="margin-left: 114px;font-size:1.0em;">
+
+
+					   <li><a href="/pcert/hpos/faces/landingHome.xhtml" tabindex="2"><span class="glyphicon glyphicon-home"></span>
+						   <span class="sr-only">home page</span>
+					   </a>
+					   </li>
+
+					   <li><a href="items/itemsPLP.xhtml" tabindex="2">Items</a></li>
+
+					   <li class="current">MBS Items Online Checker</li>
+				   </ol>
+			   </div>
+						</div>
+						
+						<div id="content" class="main-content">
+				
+						<link rel="stylesheet" href="/pcert/hpos/common/css/universal.css" />
+					    <link rel="stylesheet" href="/pcert/hpos/common/css/pattern-layout-E2.css" />
+						<link rel="stylesheet" href="/pcert/hpos/common/css/hpos-layout.css" />
+						<link rel="stylesheet" href="/pcert/hpos/common/css/print.css" media="print" />
+						
+						<div class="row com-main-row-wrapper">
+							<div class="col-md-12 col-xs-12">
+		
+			<div id="oldContent">
+
+			<!-- <h:form id="guiForm" styleClass="form"> -->
+
+
+				<h1>MBS Items Online Checker</h1>
+				<p>This service allows you to check the claiming eligibility of Medicare Benefits Schedule (MBS) items. <a href="http://www.mbsonline.gov.au" target="_blank"><strong>Refer to the schedule</strong><img src="../common/images/icon-external.gif" alt="External link" /></a> for more information about each of these items.</p>
+				<!--<h2>Search patient's MBS history</h2> -->
+				<h3 style="display:none">This is for WCAG 2.0 AA</h3>
+				<!--
+				<p>
+					Please enter information into the fields marked as mandatory<span class='mandatory'>*</span>
+				</p>
+				--><form id="guiForm" name="guiForm" method="post" action="../../hpos/faces/mbsItemChecker.xhtml" enctype="application/x-www-form-urlencoded" class="form">
+				<div class="activeformarea">
+					<fieldset>
+						<legend>Patient's Medicare details</legend>
+						<ol class="inline">
+						<li style="display: flex; gap: 30px;">
+							<div style="display: flex; flex-direction: column;"><label id="guiForm:guiMedicareCardNumberLabel" style="white-space: nowrap;" for="guiForm:guiMedicareCardNumber">Medicare card number
+										<span class="mandatory">(required)</span></label><input id="guiForm:guiMedicareCardNumber" name="guiForm:guiMedicareCardNumber" type="text" value="" maxlength="10" size="15" style="max-width: 200px;" />
+							</div>
+							<div style="display: flex; flex-direction: column;"><label id="guiForm:guiIndividualReferenceNumberLabel" style="white-space: nowrap;" for="guiForm:guiIndividualReferenceNumber">Individual reference number
+										<span class="mandatory">(required)</span></label><input id="guiForm:guiIndividualReferenceNumber" name="guiForm:guiIndividualReferenceNumber" type="text" value="" maxlength="1" size="1" style="max-width: 50px;" />
+							</div>
+						</li>
+
+							<li style="display: flex; gap: 10px;">
+								<div style="display: flex; flex-direction: column;"><label id="guiForm:guiFirstNameLabel" style="white-space: nowrap;" for="guiForm:guiFirstName">First name
+											<span class="mandatory">(required)</span></label><input id="guiForm:guiFirstName" name="guiForm:guiFirstName" type="text" value="" maxlength="40" size="40" />
+								</div>
+								
+								<div style="display: flex; align-items: center;"><input id="guiForm:guiKnownByOneName" type="checkbox" name="guiForm:guiKnownByOneName" value="true" style="vertical-align: middle;" /><label style="padding-left: 5px; white-space: nowrap;" class="label-normal" for="guiForm:guiKnownByOneName">Tick if patient is legally known only by one name </label>
+								</div>
+							</li>
+							<li style="display: flex;">
+								<div style="display: flex; flex-direction: column;"><label style="white-space: nowrap;" for="guiForm:guiDateOfBirth">Date of birth</label> dd/mm/yyyy<input id="guiForm:guiDateOfBirth" name="guiForm:guiDateOfBirth" type="text" maxlength="10" size="10" />
+								</div>
+							</li>
+							<li><strong>Declaration</strong><br/><br/>Where you conduct an enquiry using the MBS Items Online Checker, for each enquiry you must obtain the patient's/person acting as the patient's agent's verbal consent. I declare that:<br/><ul style="list-style: disc;"><li>I have informed the patient/person acting as the patient's agent that I will be making a request to Medicare  systems to ascertain if the selected MBS item codes will be eligible for claiming under the Medicare Benefits Scheme</li><li>To the best of my knowledge the patient/person acting as the patient's agent has understood my request; and</li><li>The patient/person acting as the patient's agent has provided verbal consent to this enquiry.</li></ul>
+							</li>
+					
+						
+							<li>
+								<br /><input id="guiForm:gui_patientConsentGiven" type="checkbox" name="guiForm:gui_patientConsentGiven" value="true" /><label class="label-normal" for="guiForm:gui_patientConsentGiven">
+									By selecting this box you agree to the above declaration.
+									<span class="mandatory">(required)</span></label>
+								<br />
+								<br />
+						  	</li>		
+							<li><Strong>Privacy note:</Strong> <br/><br/>Your personal information is protected by law, including the Privacy Act 1988, and is collected by the Australian Government  Services Australia for the assessment and administration of payments and services.<br/><br/>Your information may be used by the agency or given to other parties for the purposes of research, investigation or where you have agreed or it is required or authorised by law.<br/> <br/>You can get more information about the way in which Services Australia will manage your personal information, including our privacy policy at <a href="http://servicesaustralia.gov.au/customer/privacy"  target="_blank"><strong>servicesaustralia.gov.au/privacy</strong></a> or by requesting a copy from the agency.
+							</li>
+							
+						</ol>
+					</fieldset>
+				</div>
+
+
+<div></div> <!-- as strange as this is.. it seems 'protect' the dom in IE for when an ajax response is processed --><div id="guiForm:guiProviderNumberSection" class="activeformarea">
+						<fieldset>
+							<legend>Provider details</legend>
+							<div style="display: flex; width: 100%; ">
+								<div style="flex: none; margin-right: 20px; margin-left: 10px;"><label for="guiForm:gui_providerNumber">Provider number
+										<span class="mandatory">(required)</span></label><select id="guiForm:gui_providerNumber" name="guiForm:gui_providerNumber" size="1" onchange="jsf.ajax.request('guiForm:gui_providerNumber',event,{execute:'@this',render:'guiForm:guiProviderNumberSection','javax.faces.behavior.event':'valueChange'})">	<option value="237892" selected="selected">237892</option></select>
+								</div>
+								<div style="flex: none; margin-right: 20px;"><div class="formlabel"><label for="guiForm:gui_providerLocation">Location <!-- style="float:none; display:inline-block; width:auto; font-style:normal"> -->
+											<span class="mandatory">(required)</span></label></div><select id="guiForm:gui_providerLocation" name="guiForm:gui_providerLocation" size="1" style="margin-left: 5px;">	<option value="1T">1T</option>	<option value="2B">2B</option>	<option value="4A">4A</option>	<option value="5K">5K</option>	<option value="6Y">6Y</option>	<option value="7J">7J</option>	<option value="8X">8X</option>	<option value="9H">9H</option></select>
+
+								</div>
+								<div style="flex: none;"><div class="formlabel"><label id="guiForm:guiDateOfServiceLabel" class="formlabel" for="guiForm:guiDateOfService">Date of service</label></div><input id="guiForm:guiDateOfService" name="guiForm:guiDateOfService" type="text" value="22/03/2026" maxlength="10" size="10" disabled="disabled" />
+
+								</div>
+							</div>
+
+						</fieldset></div>
+				
+		<div id="mbs"><div id="guiForm:guiMbsItemSection" class="activeformarea">
+					<fieldset>
+						<legend>MBS items</legend>
+						<ol>
+							<li>
+								<p>Select up to 5 items to check claiming eligibility. For clear results we recommend entering MBS item numbers individually.</p>
+							</li>
+						</ol>
+
+ 					<div class="diss" style="padding-left: 22px;padding-right: 22px;"><table cellpadding="10" style="width: 100%;"><tbody>
+<tr><td class="column-left"><label style="font-weight: bold; margin-top: 10px;" for="guiForm:searchItemNumber">Search item number</label><label style="font-weight: normal !important; margin-top: 5px;">Enter at least 2 numerals, leading zeros not required</label> <br /><div style="position: relative; width: 200px;"><input id="guiForm:searchItemNumber" name="guiForm:searchItemNumber" type="text" value="" onkeypress="return validateNumericInput(event);" onkeyup="jsf.util.chain(document.getElementById('guiForm:searchItemNumber'), event,'toggleClearButton(this)', 'jsf.ajax.request(\'guiForm:searchItemNumber\',event,{render:\'guiForm:tabView guiForm:noResultsLabel\',\'javax.faces.behavior.event\':\'keyup\'})');" maxlength="8" style="padding-right: 24px; width: 100%;" /><input id="guiForm:clearBtn" name="guiForm:clearBtn" type="submit" value="x" onclick="jsf.util.chain(document.getElementById('guiForm:clearBtn'), event,'clearInputButton(this);', 'jsf.ajax.request(\'guiForm:clearBtn\',event,{render:\'guiForm:searchItemNumber guiForm:tabView guiForm:noResultsLabel\',\'javax.faces.behavior.event\':\'click\'})'); return false;" style="position: absolute; right: 10px; top: 2px; cursor:pointer; display: none;               font-weight: bold; color: black; background: none !important; border: none !important;" /></div><label style="font-weight: bold; margin-top: 10px;  margin-bottom: 10px;">Filter by care plan</label><table style="border: none !important;" class="planRadio" id="guiForm:planSelector">		<tr><td><input id="guiForm:planSelector:0" type="radio" name="guiForm:planSelector" value="CCMP" onchange="jsf.ajax.request('guiForm:planSelector',event,{render:'guiForm:removeFilterPanel guiForm:tabView guiForm:noResultsLabel','javax.faces.behavior.event':'valueChange'})" /><label for="guiForm:planSelector:0"> Chronic Condition Management Plan</label></td></tr>		<tr><td><input id="guiForm:planSelector:1" type="radio" name="guiForm:planSelector" value="EDMTP" onchange="jsf.ajax.request('guiForm:planSelector',event,{render:'guiForm:removeFilterPanel guiForm:tabView guiForm:noResultsLabel','javax.faces.behavior.event':'valueChange'})" /><label for="guiForm:planSelector:1"> Eating Disorder Treatment and Management Plan</label></td></tr>		<tr><td><input id="guiForm:planSelector:2" type="radio" name="guiForm:planSelector" value="MHTP" onchange="jsf.ajax.request('guiForm:planSelector',event,{render:'guiForm:removeFilterPanel guiForm:tabView guiForm:noResultsLabel','javax.faces.behavior.event':'valueChange'})" /><label for="guiForm:planSelector:2"> Mental Health Treatment Plan</label></td></tr></table><span id="guiForm:removeFilterPanel"><input id="guiForm:removeFilter" name="guiForm:removeFilter" type="submit" value="Remove filter" onclick="jsf.util.chain(document.getElementById('guiForm:removeFilter'), event,'clearRadioSelection();;', 'jsf.ajax.request(\'guiForm:removeFilter\',event,{render:\'guiForm:tabView guiForm:removeFilterPanel guiForm:noResultsLabel\',\'javax.faces.behavior.event\':\'click\'})'); return false;" style="width:100px;height:27px; margin-top: 10px; display: none;" /></span><div id="guiForm:selectedItemPanel"><label style="font-weight: bold; margin-top: 10px;">Selected items</label><label style="font-weight: normal !important;">Maximum of 5</label><span style="font-weight: normal !important;">None selected</span><div id="guiForm:itemSelector" style="display: grid; grid-template-columns: repeat(3, 1fr); margin-bottom: 5px; width: 80%;"></div></div></td><td class="column-right"><div id="guiForm:tabView" class="ui-tabs ui-widget ui-widget-content ui-corner-all ui-hidden-container ui-tabs-top" data-widget="tabViewWidget"><ul class="ui-tabs-nav ui-helper-reset ui-widget-header ui-corner-all" role="tablist"><li class="ui-tabs-header ui-state-default ui-tabs-selected ui-state-active ui-corner-top" role="tab" aria-expanded="true" aria-selected="true" aria-label="" data-index="0"><a href="#guiForm:tabView:j_id278175241_3_1559856d" tabindex="-1">00104-00699</a></li><li class="ui-tabs-header ui-state-default ui-corner-top" role="tab" aria-expanded="false" aria-selected="false" aria-label="" data-index="1"><a href="#guiForm:tabView:j_id278175241_3_1559856d_1" tabindex="-1">00701-10970</a></li><li class="ui-tabs-header ui-state-default ui-corner-top" role="tab" aria-expanded="false" aria-selected="false" aria-label="" data-index="2"><a href="#guiForm:tabView:j_id278175241_3_1559856d_2" tabindex="-1">10987-14202</a></li><li class="ui-tabs-header ui-state-default ui-corner-top" role="tab" aria-expanded="false" aria-selected="false" aria-label="" data-index="3"><a href="#guiForm:tabView:j_id278175241_3_1559856d_3" tabindex="-1">14217-55715</a></li><li class="ui-tabs-header ui-state-default ui-corner-top" role="tab" aria-expanded="false" aria-selected="false" aria-label="" data-index="4"><a href="#guiForm:tabView:j_id278175241_3_1559856d_4" tabindex="-1">55718-63361</a></li><li class="ui-tabs-header ui-state-default ui-corner-top" role="tab" aria-expanded="false" aria-selected="false" aria-label="" data-index="5"><a href="#guiForm:tabView:j_id278175241_3_1559856d_5" tabindex="-1">63385-66764</a></li><li class="ui-tabs-header ui-state-default ui-corner-top" role="tab" aria-expanded="false" aria-selected="false" aria-label="" data-index="6"><a href="#guiForm:tabView:j_id278175241_3_1559856d_6" tabindex="-1">66767-73354</a></li><li class="ui-tabs-header ui-state-default ui-corner-top" role="tab" aria-expanded="false" aria-selected="false" aria-label="" data-index="7"><a href="#guiForm:tabView:j_id278175241_3_1559856d_7" tabindex="-1">73355-80100</a></li></ul><div class="ui-tabs-panels"><div id="guiForm:tabView:j_id278175241_3_1559856d" class="ui-tabs-panel ui-widget-content ui-corner-bottom" role="tabpanel" aria-hidden="false" data-index="0"><div id="guiForm:tabView:j_id278175241_3_15598513" class="ui-datagrid ui-widget" style="border: 1px solid #dddddd !important;"><div id="guiForm:tabView:j_id278175241_3_15598513_content" class="ui-datagrid-content ui-widget-content"><table class="ui-datagrid-data"><tbody><tr class="ui-datagrid-row"><td class="ui-datagrid-column"><input id="guiForm:tabView:j_id278175241_3_15598513:0:itemNo" type="checkbox" name="guiForm:tabView:j_id278175241_3_15598513:0:itemNo" value="true" onchange="jsf.ajax.request('guiForm:tabView:j_id278175241_3_15598513:0:itemNo',event,{execute:'@this guiForm:tabView',render:'guiForm:selectedItemPanel guiForm:tabView guiForm:buttonsAndModal',onevent:storeActiveTabIndex,'javax.faces.behavior.event':'change'})" class="mbsCheckbox" /> <label id="guiForm:tabView:j_id278175241_3_15598513:0:labelItem" class="label-normal" for="guiForm:tabView:j_id278175241_3_15598513:0:itemNo">00104</label><div id="guiForm:tabView:j_id278175241_3_15598513:0:j_id278175241_3_155985a0" class="ui-tooltip ui-widget mbs-tooltip ui-tooltip-right"><div class="ui-tooltip-arrow"></div><div class="ui-tooltip-text ui-shadow ui-corner-all">Initial Specialist Attendance

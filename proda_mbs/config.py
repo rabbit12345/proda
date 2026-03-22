@@ -1,0 +1,134 @@
+import os
+import yaml
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+from selenium import webdriver
+
+
+@dataclass
+class ProdaConfig:
+    username: str = ""
+    password: str = ""
+    url: str = "https://proda.humanservices.gov.au/"
+
+
+@dataclass
+class GmailConfig:
+    client_secret_path: str = "client_secret.json"
+    token_path: str = "token.pickle"
+    scopes: List[str] = field(default_factory=lambda: [
+        "https://www.googleapis.com/auth/gmail.modify"
+    ])
+
+
+@dataclass
+class MbsConfig:
+    provider_location: str = "8X"
+    items_to_check: List[str] = field(default_factory=lambda: [
+        "00965", "00967", "2715", "2717"
+    ])
+
+
+@dataclass
+class SessionConfig:
+    keepalive_interval_seconds: int = 300
+    page_load_timeout: int = 30
+    element_wait_timeout: int = 15
+    ajax_stability_delay: float = 1.0
+    retry_count: int = 3
+
+
+@dataclass
+class BrowserConfig:
+    type: str = "firefox"  # "firefox" or "chrome"
+    headless: bool = False
+
+
+@dataclass
+class AppConfig:
+    proda: ProdaConfig = field(default_factory=ProdaConfig)
+    gmail: GmailConfig = field(default_factory=GmailConfig)
+    mbs: MbsConfig = field(default_factory=MbsConfig)
+    session: SessionConfig = field(default_factory=SessionConfig)
+    browser: BrowserConfig = field(default_factory=BrowserConfig)
+
+
+def load_config(config_path: Optional[str] = None) -> AppConfig:
+    """Load configuration from YAML file with environment variable fallback."""
+    config = AppConfig()
+
+    # Try to load YAML config
+    if config_path is None:
+        # Look for config.yaml in the package's parent directory
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_path = os.path.join(base_dir, "config.yaml")
+
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            data = yaml.safe_load(f) or {}
+
+        proda = data.get("proda", {})
+        config.proda.username = proda.get("username", "")
+        config.proda.password = proda.get("password", "")
+        config.proda.url = proda.get("url", config.proda.url)
+
+        gmail = data.get("gmail", {})
+        config.gmail.client_secret_path = gmail.get(
+            "client_secret_path", config.gmail.client_secret_path
+        )
+        config.gmail.token_path = gmail.get("token_path", config.gmail.token_path)
+
+        mbs = data.get("mbs", {})
+        config.mbs.provider_location = mbs.get(
+            "provider_location", config.mbs.provider_location
+        )
+        if "items_to_check" in mbs:
+            config.mbs.items_to_check = [str(i) for i in mbs["items_to_check"]]
+
+        session = data.get("session", {})
+        config.session.keepalive_interval_seconds = session.get(
+            "keepalive_interval_seconds", config.session.keepalive_interval_seconds
+        )
+        config.session.page_load_timeout = session.get(
+            "page_load_timeout", config.session.page_load_timeout
+        )
+        config.session.element_wait_timeout = session.get(
+            "element_wait_timeout", config.session.element_wait_timeout
+        )
+        config.session.retry_count = session.get(
+            "retry_count", config.session.retry_count
+        )
+
+        browser = data.get("browser", {})
+        config.browser.type = browser.get("type", config.browser.type)
+        config.browser.headless = browser.get("headless", config.browser.headless)
+
+    # Environment variable fallback for credentials
+    config.proda.username = os.environ.get("PRODA_USERNAME", config.proda.username)
+    config.proda.password = os.environ.get("PRODA_PASSWORD", config.proda.password)
+
+    # Resolve relative paths for Gmail files
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if not os.path.isabs(config.gmail.client_secret_path):
+        config.gmail.client_secret_path = os.path.join(
+            base_dir, config.gmail.client_secret_path
+        )
+    if not os.path.isabs(config.gmail.token_path):
+        config.gmail.token_path = os.path.join(base_dir, config.gmail.token_path)
+
+    return config
+
+
+def create_driver(browser_config: BrowserConfig) -> webdriver.Remote:
+    """Create a Selenium WebDriver instance based on config."""
+    if browser_config.type.lower() == "chrome":
+        options = webdriver.ChromeOptions()
+        if browser_config.headless:
+            options.add_argument("--headless")
+        return webdriver.Chrome(options=options)
+    else:
+        options = webdriver.FirefoxOptions()
+        if browser_config.headless:
+            options.add_argument("--headless")
+        return webdriver.Firefox(options=options)

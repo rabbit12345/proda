@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+
+
+
+<head>
+
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>2-step verification | PRODA</title>
+    <meta name="description" content="Provider Digital Access">
+    <!-- Bootstrap core CSS -->
+    <link href="/mga/sps/static/proda/css/proda.css" type="text/css" rel="stylesheet">
+
+
+    <script src="/mga/sps/static/proda/js/vendor/jquery-2-1-4.min.js"></script>
+    <script src="/mga/sps/static/proda/js/vendor/tether.min.js"></script>
+    <script src="/mga/sps/static/proda/js/vendor/bootstrap.min.js"></script>
+    <script src="/mga/sps/static/proda/js/vendor/jquery.customSelect.min.js"></script>
+    <script src="/mga/sps/static/proda/js/vendor/jquery.validate.min.js"></script>
+
+    <script src="/mga/sps/static/proda/js/validation.js"></script>
+    <script src="/mga/sps/static/proda/js/script.js"></script>
+
+    
+    <link href="/mga/sps/static/proda/css/rp/proda.css" type="text/css" rel="stylesheet">
+    
+
+<SCRIPT type="text/javascript">
+/*<![CDATA[*/ 
+document.cookie = "IV_JCT=%2Fmga; path=/";
+/*]]>*/ 
+</SCRIPT>
+</head>
+<body>
+
+<!--Header-->
+<div id="web-header-section">
+    <div id="skip-link">
+        <a class="sr-only-focusable sr-only" href="#page-content">Skip to main content</a>
+    </div>
+    
+    <!--Help icon-->
+    <div class="aux-functions" id="helpTextIcons">
+        <ul class="list-unstyled">
+            <li>
+                <button id="helpToggleControl" type="button" class="floating-help" title="Show or hide the help system"
+                        data-toggle="offcanvas">
+                    <span class="sr-only">Help</span>
+                </button>
+            </li>
+        </ul>
+    </div>
+    <!--Help text-->
+    <div aria-hidden="true" class="right-drawer" id="rightDrawer" style="display: block;">
+        <span class="close-rightnav-control"><a href="#" id="close_help_link" class="close_help_link"
+                                                onclick="closeRightNav();return false;">Close</a></span> <a id="help"
+                                                                                                            name="help"></a>
+        <h2 class="rightnav-header">Help</h2>
+
+        <div class="drawer-help helpContent" id="drawerHelp">
+            <div class="panel-group" id="helpPanel" role="dialog">
+                <div class="panel panel-default">
+                    <div class="hideableHelp" id="tcNewUserHelp" style="display: block;">
+                        <div class="panel-heading">
+                            <h3>2-step verification</h3>
+                        </div>
+
+                        <div class="panel-body">
+
+                            <a href="#whyDoWeRequireVerificationCodes" class="help_anchor_links">Why do we require
+                                verification codes?</a><br>
+                            <a href="#enterCode" class="help_anchor_links">Enter code</a><br>
+                            <a href="#didntReceiveYourCode" class="help_anchor_links row-padding">Didn't get your
+                                code?</a><br>
+
+                            <a name="whyDoWeRequireVerificationCodes"/>
+                            <h4 style="padding-top:15px">Why do we require verification codes?</h4>
+                            <p>Verification codes are used to support a 2-Step verification process. 2-Step verification
+                                adds an extra layer of
+                                security to your account, reducing the chances of someone stealing your account and
+                                using it to access your personal
+                                information. To break into an account with 2-Step verification, an individual would not
+                                only have to know your username
+                                and password, they would also have to gain access to your mobile phone or email
+                                address.</p>
+
+                            <a name="enterCode"/>
+                            <h4>Enter code</h4>
+                            <p>Enter the code that is sent to your preferred option (email or SMS). If you don't
+                                have your preferred device nearby you can request a code be generated via an alternate
+                                channel. To do so select
+                                'send a code to a backup channel'.</p>
+
+
+                            <a name="didntReceiveYourCode"/>
+                            <h4>Didn't get your code?</h4>
+                            
+                            <p>If you don't receive your verification code after a few minutes, remember to:</p>
+                            
+                            <ul>
+                                <li>check your junk mail</li>
+                                <li>check the email address you entered is correct</li>
+                                <li>select "Resend code" when it's available</li>
+                                <li><a href="https://www.servicesaustralia.gov.au/business-and-employer-contact-information?context=60075#proda" target="_blank" title="Contact us">contact us</a> for further support</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="drawer-print" style="display:none;"></div><!-- drawer-favourites end -->
+            </div>
+        </div>
+    </div>
+
+    <header class="header">
+        <div class="row header">
+            <div class="top-bar">
+
+                <div class="logo col-xs-6 col-sm-4 hidden-xs-down">
+                    <img src="/mga/sps/static/proda/images/rp_logo/proda/logo-large.png" alt="dhs site logo"
+                         class="crest">
+                </div>
+                <div class="logo col-xs-4 col-sm-4 hidden-sm-up">
+                    <img src="/mga/sps/static/proda/images/rp_logo/proda/logo-small.png" alt="dhs site logo"
+                         class="crest">
+                </div>
+                <div class="sitetitle col-xs-6 col-sm-4">
+                    <span class="h1">PRODA</span>
+                    <span>Provider Digital Access</span>
+                </div>
+            </div>
+        </div>
+    </header>
+</div>
+<!--End header-->
+<!--Main content-->
+<main>
+    <div id="page-content" class="wrapper">
+
+        <div class="extraspace"></div>
+        <!--Common error message-->
+        <div id="common-error" class="row">
+        
+        
+            <!-- ERROR MESSAGE TEXT  -->
+        
+        </div>
+        
+        <!--End comment error message-->
+        <div id="web-content-section" class="row fillheight dropshadow">
+            <div class="gutter" id="mainContent">
+
+                <div class="button-row-in-container thirtybottom">
+                    <a href="javascript:history.back()" role="button" class="backbutton">Back</a>
+                </div>
+
+                <h1>2-step verification</h1>
+
+                <div class="alert alert-success hidden" role="alert">
+                    <span class="feedbackmessage">2-step verification was sent successfully</span>
+                </div>
+
+                <p>Enter the verification code from your email below.</p>
+
+                <!-- PRODA Mobile TOTP App Decommission -->
+                
+
+                
+                <p id="selectBackupChannel">
+                    <span>If you cannot access your email at this time we can </span>
+                    <a id="reselectLink" href="javascript:void(0)"
+                       onclick="document.getElementById('reselectForm').submit();">send a code to a backup
+                        channel</a>.
+                </p>
+                
+
+                <form id="otp-form" method="POST" action="/mga/sps/authsvc/policy/proda?StateId=3TmiNp1daplWeqZjQvmibeN2Q83roOlNKWhYlqt9gzBNDUhOEjvlB7qssliowTYwja2ykGKheLCliIjExwCZSltFRssHA4gBNg4VzBq5GKIa8DAmOVg7xcCk8CAC1y33&operation=verify" autocomplete="off" novalidate="novalidate" onsubmit="submitLogin()">
+                    <label class="vertical" for="otppswd">Enter Code</label>
+                    <div class="row">
+                        <div class="col-sm-4">
+                            <input style="height:34px;" type="password" name="otp.user.otp" class="short" id="otppswd"
+                                   maxlength="6" required=""
+                                   oninvalid="setCustomValidity('This field is mandatory. To continue please complete all mandatory fields.')"
+                                   oninput="setCustomValidity('')">
+                            
+                            <p>
+                                <a href="#regenerateButtonDiv" role="button" class="btn_tertiary" data-toggle="modal">Didn't get your code?</a>
+                            </p>
+                            
+                        </div>
+                        <!-- END still having trouble? -->
+                    </div>
+
+
+                    <div class="button-row-in-container">
+                        <button id="submit-btn" class="btn btn-primary submitButton" type="submit" >
+                            Next
+                        </button>
+                    </div>
+
+                </form>
+            </div>
+        </div>
+        <!-- empty forms that will be submitted using JS. Put it out here because it interferes with otp-form if we put it next to its link -->
+        <form id="reselectForm" name="reselect-form" method="POST" action="/mga/sps/authsvc/policy/proda?StateId=3TmiNp1daplWeqZjQvmibeN2Q83roOlNKWhYlqt9gzBNDUhOEjvlB7qssliowTYwja2ykGKheLCliIjExwCZSltFRssHA4gBNg4VzBq5GKIa8DAmOVg7xcCk8CAC1y33&operation=select">
+            <input type="hidden" name="Reselect" value="Reselect"/>
+        </form>
+        
+    </div>
+
+    <div class="push"></div>
+    
+    <!-- Modal section-->
+    <div id="regenerateButtonDiv" class="modal hide fade" tabindex="-1" role="dialog" aria-labelledby="myModalLabel"
+         aria-describedby="myDesc" aria-modal="true" aria-hidden="true">
+        <div class="vertical-alignment-helper">
+            <div class="modal-dialog vertical-align-center">
+                <form id="regenerate-form" method="POST" action="/mga/sps/authsvc/policy/proda?StateId=3TmiNp1daplWeqZjQvmibeN2Q83roOlNKWhYlqt9gzBNDUhOEjvlB7qssliowTYwja2ykGKheLCliIjExwCZSltFRssHA4gBNg4VzBq5GKIa8DAmOVg7xcCk8CAC1y33&operation=generate">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <button type="button" class="close" data-dismiss="modal" aria-label="close">×</button>
+                            <h2 id="myModalLabel">Didn't get your code?</h2>
+                        </div>
+                        <div id="myDesc" class="modal-body">
+                            <div class="resendcodemsg">                                
+                                <p>If you don't receive your verification code after a few minutes, remember to:</p>
+                                
+                                <ul>
+                                    <li>check your junk mail</li>
+                                    <li>check the email address you entered is correct</li>
+                                    <li>select "Resend code" when it's available</li>
+                                    <li><a href="https://www.servicesaustralia.gov.au/business-and-employer-contact-information?context=60075#proda" target="_blank" title="Contact us">contact us</a> for further support</li>
+                                </ul>
+
+                                <div class="modal-button-container">
+                                    <button type="button" name="Regenerate" data-dismiss="modal" value="Resend code"
+                                            class="btn btn-primary content-center"
+                                            onclick="regenerateCodeAndDisableButton();">Resend code
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <!--End modal section-->
+    
+</main>
+
+<!--End main content-->
+<footer class="footer hide-for-print clearfix" role="contentinfo">
+    <div class="row">
+        <div class="container">
+            <div class="row">
+                <ul>
+                    <li><a href="http://www.servicesaustralia.gov.au/customer/information/site-information?utm_id=9" target="_blank" title="Legal Notices" class="legal-notices">
+                        <span class="sr-only">Legal notices. Opens in a new window</span></a>
+                    </li>
+                    <li><a href="https://www.servicesaustralia.gov.au/organisations/business/business-employer-contact-information#proda" target="_blank" title="Contact us" class="contact-us">
+                        <span class="sr-only">Contact us. Opens in a new window</span></a>
+                    </li>
+                    <li><a href="http://www.servicesaustralia.gov.au/customer/information/privacy?utm_id=9" target="_blank" title="Your Rights" class="your-rights">
+                        <span class="sr-only">Your rights. Opens in a new window</span></a>
+                    </li>
+                    <li><a href="http://www.servicesaustralia.gov.au/customer/contact-us/complaints-and-feedback" target="_blank" title="Feedback" class="feedback">
+                        <span class="sr-only">Feedback. Opens in a new window</span></a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</footer>
+
+
+
+
+<script id="REGENERATE">
+    var regenerateDisabled = false;
+    var disabled_timeout = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+    function regenerateCodeAndDisableButton() {
+        setCookie("resendBtnClicked", "true");
+        var form = "regenerate-form";
+
+        if (!regenerateDisabled) {
+            checkAndDisableRegenerateButton();
+            document.getElementById(form).submit();
+        } else {
+            alert("You must wait five minutes before requesting another code.")
+        }
+        return true;
+    }
+
+    function checkAndDisableRegenerateButton() {
+        // Disable the RESEND CODE button for 5 minutes when clicked -->
+        var resendClicked = getCookie("resendBtnClicked");
+        if (resendClicked != null && resendClicked == "true") {
+            enableDisableRegenerateButton(true);
+            setTimeout(function () {
+                enableDisableRegenerateButton(false);
+            }, disabled_timeout);
+        }
+        return true;
+    }
+
+    function enableDisableRegenerateButton(disable) {
+        $('[name="Regenerate"]').attr("disabled", disable);
+        regenerateDisabled = disable;
+        // for (var x = 0; x < resendCodeBtns.length; x++) {
+        //     var resendCodeBtn = resendCodeBtns[x];
+        //     resendCodeBtn.disabled = disable;
+        // }
+        return true;
+    }
+
+    var today = new Date();
+    var expiry = new Date(today.getTime() + disabled_timeout); // plus 5 mins
+    function setCookie(name, value) {
+        document.cookie = name + "=" + escape(value) + "; path=/; expires=" + expiry.toGMTString();
+    }
+
+    function getCookie(name) {
+        var re = new RegExp(name + "=([^;]+)");
+        var value = re.exec(document.cookie);
+        return (value != null) ? unescape(value[1]) : null;
+    }
+
+    checkAndDisableRegenerateButton();
+
+</script>
+
+<script id="SUBMIT_SCRIPTS">
+    function submitOtpForm() {
+        // This function is created because IE does not support HTML5 <input form="">  -->
+        document.querySelector('input[name="Submit"]').click();
+    }
+
+    // stop double submit
+    function submitLogin() {
+        document.getElementById('submit-btn').disabled = true;
+    }
+
+    function logout() {
+        window.location = "/pkmslogout";
+    }
+</script>
+
+
+<!-- IE10 viewport hack for Surface/desktop Windows 8 bug.  May want to re-enable this?
+<script src="../../assets/js/ie10-viewport-bug-workaround.js"></script>
+-->
+</body>
+
+</html>
