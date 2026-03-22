@@ -40,7 +40,12 @@ echo ""
 
 # ── 1. System packages ───────────────────────────────────────────────
 info "Installing system dependencies..."
-sudo apt-get update -qq
+
+# Update package lists - allow failures from broken third-party repos
+if ! sudo apt-get update -qq 2>/dev/null; then
+    warn "apt-get update had errors (likely a stale third-party repo)."
+    warn "Continuing with available package lists..."
+fi
 
 sudo apt-get install -y -qq \
     python3 \
@@ -49,7 +54,7 @@ sudo apt-get install -y -qq \
     wget \
     curl \
     unzip \
-    > /dev/null 2>&1
+    2>&1 | grep -v "^$" || error "Failed to install system packages."
 
 info "System packages installed."
 
@@ -70,8 +75,9 @@ if [ "$BROWSER_CHOICE" = "2" ]; then
     if ! command -v google-chrome &>/dev/null && ! command -v google-chrome-stable &>/dev/null; then
         wget -q -O /tmp/google-chrome.deb \
             "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
-        sudo apt-get install -y -qq /tmp/google-chrome.deb > /dev/null 2>&1 || \
-            sudo apt-get install -f -y -qq > /dev/null 2>&1
+        sudo apt-get install -y -qq /tmp/google-chrome.deb 2>/dev/null || \
+            sudo apt-get install -f -y -qq 2>/dev/null || \
+            error "Failed to install Google Chrome."
         rm -f /tmp/google-chrome.deb
     fi
 
@@ -83,8 +89,9 @@ else
 
     # Install Firefox if not present
     if ! command -v firefox &>/dev/null; then
-        sudo apt-get install -y -qq firefox-esr > /dev/null 2>&1 || \
-            sudo apt-get install -y -qq firefox > /dev/null 2>&1
+        sudo apt-get install -y -qq firefox-esr 2>/dev/null || \
+            sudo apt-get install -y -qq firefox 2>/dev/null || \
+            error "Failed to install Firefox."
     fi
 
     # Install geckodriver if not present
