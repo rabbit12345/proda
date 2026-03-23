@@ -35,7 +35,6 @@ class SessionConfig:
     keepalive_interval_seconds: int = 300
     page_load_timeout: int = 30
     element_wait_timeout: int = 15
-    ajax_stability_delay: float = 1.0
     retry_count: int = 3
 
 
@@ -109,9 +108,6 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
         )
         config.session.element_wait_timeout = session.get(
             "element_wait_timeout", config.session.element_wait_timeout
-        )
-        config.session.ajax_stability_delay = session.get(
-            "ajax_stability_delay", config.session.ajax_stability_delay
         )
         config.session.retry_count = session.get(
             "retry_count", config.session.retry_count

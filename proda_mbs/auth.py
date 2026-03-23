@@ -9,10 +9,7 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 from .config import AppConfig
 from .gmail_otp import GmailOtpExtractor, GmailAuthError
-
-
-def log(msg: str):
-    print(f"{time.strftime('%d/%m/%y %H:%M:%S')} {msg}")
+from .waits import wait_for_ajax, wait_for_page_load, log
 
 
 class LoginError(Exception):
@@ -55,7 +52,6 @@ class ProdaAuthenticator:
 
     def _find_error_on_page(self) -> str | None:
         """Scan the current page for visible error messages."""
-        # Check URL for error codes
         try:
             url = self.driver.current_url
             if "ERROR_CODE" in url and "0x00000000" not in url:
@@ -63,7 +59,6 @@ class ProdaAuthenticator:
         except Exception:
             pass
 
-        # Check known error element selectors
         for selector in _ERROR_SELECTORS:
             try:
                 el = self.driver.find_element(By.CSS_SELECTOR, selector)
@@ -72,7 +67,6 @@ class ProdaAuthenticator:
             except NoSuchElementException:
                 continue
 
-        # Scan body text for error phrases
         try:
             body_text = self.driver.find_element(By.TAG_NAME, "body").text
             for phrase in _ERROR_PHRASES:
@@ -86,39 +80,70 @@ class ProdaAuthenticator:
 
     # -- Login flow -----------------------------------------------------------
 
-    def login(self, max_otp_attempts: int = 3):
+    def login(self, max_otp_attempts: int = 3, max_login_retries: int = 2):
         """Execute the full PRODA login flow including 2FA."""
-        self._navigate_to_login()
-        self._enter_credentials()
-        self._submit_login()
-
         self._init_gmail_extractor()
-        self.gmail_extractor.purge_old_otp_emails()
-        self._request_otp_via_email()
 
-        for attempt in range(1, max_otp_attempts + 1):
-            log(f"OTP attempt {attempt}/{max_otp_attempts}")
-            code = self._retrieve_otp_from_gmail()
+        for login_try in range(1, max_login_retries + 1):
+            if login_try > 1:
+                log(f"Restarting full login (attempt {login_try}/{max_login_retries})")
 
-            if not code:
-                if attempt < max_otp_attempts:
-                    log("No OTP found, requesting a new code...")
-                    self._request_new_otp()
-                    continue
-                raise LoginError("Could not retrieve OTP code from Gmail")
+            self._navigate_to_login()
+            self._enter_credentials()
 
-            if self._submit_otp(code):
+            # Purge old OTP emails and set the request timestamp BEFORE
+            # submitting login.  PRODA sends the OTP during _submit_login(),
+            # so the timestamp must already be recorded — otherwise the
+            # freshly-arrived email has an internalDate earlier than the
+            # timestamp and the stale-filter incorrectly skips it, causing
+            # an unnecessary 90-second wait and a duplicate resend email.
+            self.gmail_extractor.purge_old_otp_emails()
+            self.gmail_extractor.mark_otp_requested()
+
+            self._submit_login()
+
+            if self._is_otp_field_present():
+                log("OTP field already present - portal sent OTP to default channel, skipping backup request")
+            else:
+                log("OTP field not found - requesting via backup email channel")
+                self._request_otp_via_email()
+
+            if self._otp_loop(max_otp_attempts):
                 log("Login complete - reached My Services page")
                 return
 
-            if attempt < max_otp_attempts:
-                log("OTP rejected, purging and requesting a new code...")
-                self.gmail_extractor.purge_old_otp_emails()
-                self._request_new_otp()
+            if login_try < max_login_retries:
+                log("All OTP attempts failed, will retry full login...")
             else:
                 raise LoginError(
-                    f"OTP rejected after {max_otp_attempts} attempts. {self._diag()}"
+                    f"Login failed after {max_login_retries} full attempts. "
+                    f"{self._diag()}"
                 )
+
+    def _otp_loop(self, max_attempts: int) -> bool:
+        """Try up to max_attempts OTP codes. Returns True on success."""
+        for attempt in range(1, max_attempts + 1):
+            log(f"OTP attempt {attempt}/{max_attempts}")
+            code = self._retrieve_otp_from_gmail()
+
+            if not code:
+                if attempt < max_attempts:
+                    log("No OTP found, clicking 'Didn't get your code?'...")
+                    self.gmail_extractor.purge_old_otp_emails()
+                    self._click_didnt_get_code()
+                    continue
+                log("No OTP found after all attempts")
+                return False
+
+            if self._submit_otp(code):
+                return True
+
+            if attempt < max_attempts:
+                log("OTP incorrect/expired, clicking 'Didn't get your code?'...")
+                self.gmail_extractor.purge_old_otp_emails()
+                self._click_didnt_get_code()
+
+        return False
 
     # -- Step implementations -------------------------------------------------
 
@@ -126,6 +151,7 @@ class ProdaAuthenticator:
         log("Navigating to PRODA login page")
         self.driver.get(self.config.proda.url)
         try:
+            wait_for_page_load(self.driver, self.page_timeout)
             self._wait(
                 EC.presence_of_element_located(
                     (By.ID, "loginFormAndStuff:username")
@@ -145,12 +171,11 @@ class ProdaAuthenticator:
             raise LoginError("PRODA username or password is empty. Check config.yaml")
 
         try:
-            username_field = self.driver.find_element(
-                By.ID, "loginFormAndStuff:username"
-            )
+            username_field = self._wait(EC.element_to_be_clickable(
+                (By.ID, "loginFormAndStuff:username")
+            ))
             username_field.click()
             username_field.clear()
-            # Set via JS to bypass client-side keystroke validation (e.g. '@')
             self.driver.execute_script(
                 "arguments[0].value = arguments[1]", username_field, username
             )
@@ -161,9 +186,9 @@ class ProdaAuthenticator:
                 el.dispatchEvent(new Event('blur', {bubbles: true}));
             """, username_field)
 
-            password_field = self.driver.find_element(
-                By.ID, "loginFormAndStuff:inputPassword"
-            )
+            password_field = self._wait(EC.element_to_be_clickable(
+                (By.ID, "loginFormAndStuff:inputPassword")
+            ))
             password_field.click()
             password_field.clear()
             password_field.send_keys(password)
@@ -187,6 +212,7 @@ class ProdaAuthenticator:
                 EC.title_contains("2-step verification"),
                 timeout=self.page_timeout
             )
+            wait_for_page_load(self.driver, self.page_timeout)
             log(f"Reached 2-step verification page ({self._diag()})")
         except TimeoutException:
             error_msg = self._find_error_on_page()
@@ -195,6 +221,17 @@ class ProdaAuthenticator:
             raise LoginError(
                 f"Did not reach 2-step verification page after login. {self._diag()}"
             )
+
+    def _is_otp_field_present(self, timeout: int = 5) -> bool:
+        """Check if the OTP entry field is already visible,
+        meaning the portal sent OTP to the default channel."""
+        try:
+            WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.ID, "otppswd"))
+            )
+            return True
+        except TimeoutException:
+            return False
 
     def _request_otp_via_email(self):
         log("Requesting OTP via email")
@@ -207,8 +244,7 @@ class ProdaAuthenticator:
         except TimeoutException:
             raise LoginError(f"Could not find backup channel link. {self._diag()}")
 
-        time.sleep(2)
-
+        # Wait for email option to appear (no fixed sleep)
         try:
             email_option = self._wait(EC.element_to_be_clickable(
                 (By.ID, "span-email")
@@ -257,47 +293,60 @@ class ProdaAuthenticator:
             log("No OTP code found in Gmail")
         return code
 
-    def _request_new_otp(self):
-        """Request a new OTP code when the previous one failed."""
+    def _click_didnt_get_code(self):
+        """Click 'Didn't get your code?' link to request a new OTP."""
         resend_selectors = [
+            (By.XPATH, "//a[contains(text(), \"Didn't get your code\")]"),
+            (By.XPATH, "//a[contains(text(), \"didn't get your code\")]"),
+            (By.CSS_SELECTOR, "a[href*='regenerateButtonDiv']"),
             (By.XPATH, "//a[contains(text(), 'Resend')]"),
-            (By.XPATH, "//a[contains(text(), 'resend')]"),
             (By.XPATH, "//a[contains(text(), 'Send again')]"),
             (By.XPATH, "//a[contains(text(), 'new code')]"),
-            (By.XPATH, "//button[contains(text(), 'Resend')]"),
-            (By.ID, "resendLink"),
         ]
         for by, selector in resend_selectors:
             try:
-                el = WebDriverWait(self.driver, 3).until(
+                el = WebDriverWait(self.driver, 5).until(
                     EC.element_to_be_clickable((by, selector))
                 )
+                self.gmail_extractor.mark_otp_requested()
                 el.click()
-                log("Clicked resend OTP link")
-                time.sleep(3)
+                log("Clicked 'Didn't get your code?' link")
+                # Wait for OTP field to be ready again (no fixed sleep)
+                try:
+                    self._wait(
+                        EC.presence_of_element_located((By.ID, "otppswd")),
+                        timeout=self.page_timeout
+                    )
+                except TimeoutException:
+                    log("OTP field not found after resend, page may have changed")
                 return
             except TimeoutException:
                 continue
 
-        log("No resend link found, re-requesting via backup channel")
+        log("No resend link found on page, re-requesting via backup channel")
+        self.gmail_extractor.mark_otp_requested()
         self._request_otp_via_email()
 
     def _submit_otp(self, code: str) -> bool:
         """Submit OTP code. Returns True if successful, False if rejected."""
         log(f"Entering OTP code: {code}")
         try:
-            otp_field = self._wait(EC.presence_of_element_located(
+            otp_field = self._wait(EC.element_to_be_clickable(
                 (By.ID, "otppswd")
             ))
             otp_field.click()
             otp_field.clear()
-            for ch in code:
-                otp_field.send_keys(ch)
-                time.sleep(0.1)
+            otp_field.send_keys(code)
 
-            time.sleep(2)
+            # Verify the field accepted all characters
+            WebDriverWait(self.driver, 5).until(
+                lambda d: d.find_element(By.ID, "otppswd").get_attribute("value") == code
+            )
+
+            # Wait for any client-side validation AJAX
+            wait_for_ajax(self.driver, timeout=5)
+
             log("OTP entered, submitting...")
-
             submit_btn = self._wait(EC.element_to_be_clickable(
                 (By.ID, "submit-btn")
             ))
@@ -311,16 +360,30 @@ class ProdaAuthenticator:
             return True
         except TimeoutException:
             title = self.driver.title
-            log(f"Post-OTP state: title='{title}' url='{self.driver.current_url}'")
+            url = self.driver.current_url
+            log(f"Post-OTP state: title='{title}' url='{url}'")
+
+            otp_error = self._check_otp_error_message()
+            if otp_error:
+                log(f"OTP rejected: {otp_error}")
+                return False
 
             error_msg = self._find_error_on_page()
             if error_msg:
                 log(f"OTP error: {error_msg}")
                 return False
 
-            # If we're on a page that's not login/verification, assume success
             if "verification" not in title.lower() and "login" not in title.lower():
                 log(f"Landed on '{title}' — continuing")
                 return True
 
             return False
+
+    def _check_otp_error_message(self) -> str | None:
+        try:
+            body_text = self.driver.find_element(By.TAG_NAME, "body").text
+            if "verification code is incorrect or expired" in body_text.lower():
+                return "Your second stage verification code is incorrect or expired"
+        except Exception:
+            pass
+        return None

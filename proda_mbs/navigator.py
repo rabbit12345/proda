@@ -1,4 +1,4 @@
-import time
+from __future__ import annotations
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -6,23 +6,18 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from .config import AppConfig
-
-
-def log(msg: str):
-    print(f"{time.strftime('%d/%m/%y %H:%M:%S')} {msg}")
+from .waits import wait_for_page_load, log
 
 
 class NavigationError(Exception):
     pass
 
 
-# Known HPOS URLs
 _HPOS_MBS_URL = (
     "https://www2.medicareaustralia.gov.au:5447"
     "/pcert/hpos/securityRedirect.do?target=HPOS.NAVMENU.ITEM.MBSIOC"
 )
 
-# Selectors tried in order for the HPOS link on My Services
 _HPOS_SELECTORS = [
     (By.XPATH, "//a[contains(@onclick, 'j_id_2_2_1n:0:j_id_2_2_1s')]"),
     (By.XPATH, "//a[contains(text(), 'Go to service')]"),
@@ -44,30 +39,42 @@ class HposNavigator:
             self.driver, timeout or self.wait_timeout
         ).until(condition)
 
-    def _wait_for_page_load(self, timeout=None):
-        """Wait for document.readyState to be 'complete'."""
-        timeout = timeout or self.page_timeout
-        WebDriverWait(self.driver, timeout).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
+    def _switch_to_new_window(self, original_handles, target_title_fragment: str = ""):
+        """Switch to a newly opened window/tab if one appears.
 
-    def _switch_to_new_window(self, original_handles):
-        """Switch to a newly opened window/tab if one appeared."""
+        To avoid a long wait when the link navigates the *current* tab
+        instead of opening a new one, we also check whether the current
+        window's title already contains ``target_title_fragment``.
+        """
+        deadline = 10  # max seconds to wait for a new handle
         try:
-            WebDriverWait(self.driver, 10).until(
-                lambda d: len(d.window_handles) > len(original_handles)
+            def _new_handle_or_current_nav(d):
+                # A new tab appeared — switch to it
+                if len(d.window_handles) > len(original_handles):
+                    return "new_window"
+                # No new tab, but the current page already navigated
+                if target_title_fragment and target_title_fragment.lower() in d.title.lower():
+                    return "same_window"
+                return False
+
+            result = WebDriverWait(self.driver, deadline).until(
+                _new_handle_or_current_nav
             )
-            new_handles = set(self.driver.window_handles) - set(original_handles)
-            if new_handles:
-                self.driver.switch_to.window(new_handles.pop())
-                log(f"Switched to new window: title='{self.driver.title}'")
+
+            if result == "new_window":
+                new_handles = set(self.driver.window_handles) - set(original_handles)
+                if new_handles:
+                    self.driver.switch_to.window(new_handles.pop())
+                    log(f"Switched to new window: title='{self.driver.title}'")
+                    return True
+            else:
+                log("HPOS loaded in current tab (no new window)")
                 return True
         except TimeoutException:
             pass
         return False
 
     def navigate_to_hpos(self):
-        """From My Services page, click 'Go to service' for HPOS."""
         log("Navigating to HPOS from My Services")
         try:
             self._wait(EC.title_contains("My Services"),
@@ -95,14 +102,28 @@ class HposNavigator:
         if not clicked:
             raise NavigationError("Could not find HPOS 'Go to service' link")
 
-        self._switch_to_new_window(original_handles)
+        hpos_title = "Health Professional Online Services"
+        self._switch_to_new_window(original_handles,
+                                   target_title_fragment=hpos_title)
 
         try:
             self._wait(
-                EC.title_contains("Health Professional Online Services"),
+                EC.title_contains(hpos_title),
                 timeout=self.page_timeout
             )
-            self._wait_for_page_load()
+            # Best-effort page-load wait.  On HPOS the government
+            # portal often has slow background resources (tracking
+            # pixels, certificate negotiation) that keep readyState at
+            # "loading" long after the page is usable.  execute_script
+            # can block at the transport level with no way for
+            # WebDriverWait's timeout to interrupt it, causing an
+            # indefinite hang that only Ctrl-C can break.  A short,
+            # non-fatal wait is sufficient — the title check above
+            # already confirms we are on the right page.
+            try:
+                wait_for_page_load(self.driver, timeout=5)
+            except (TimeoutException, Exception) as e:
+                log(f"Page readyState wait skipped ({e}) — title confirmed, continuing")
             log(f"Reached HPOS landing page ({self.driver.current_url})")
         except TimeoutException:
             raise NavigationError(
@@ -111,12 +132,11 @@ class HposNavigator:
             )
 
     def navigate_to_mbs_checker(self):
-        """Navigate directly to MBS Items Online Checker via redirect URL."""
         log("Navigating to MBS Items Online Checker")
         self.driver.get(_HPOS_MBS_URL)
 
         try:
-            self._wait_for_page_load(timeout=self.page_timeout * 2)
+            wait_for_page_load(self.driver, self.page_timeout * 2)
             self._wait(
                 EC.presence_of_element_located(
                     (By.ID, "guiForm:guiMedicareCardNumber")
@@ -131,12 +151,10 @@ class HposNavigator:
             raise NavigationError("Failed to load MBS Items Online Checker form")
 
     def navigate_to_mbs_checker_full(self):
-        """Execute the full navigation: My Services -> HPOS -> MBS Checker."""
         self.navigate_to_hpos()
         self.navigate_to_mbs_checker()
 
     def _dump_menu_links(self):
-        """Log page links for debugging navigation failures."""
         try:
             links = self.driver.find_elements(By.TAG_NAME, "a")
             log(f"Found {len(links)} links on page:")

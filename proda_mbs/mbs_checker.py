@@ -1,4 +1,5 @@
-import time
+from __future__ import annotations
+
 import re
 from typing import List, Dict, Optional
 
@@ -8,17 +9,13 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 from .config import AppConfig
-
-
-def log(msg: str):
-    print(f"{time.strftime('%d/%m/%y %H:%M:%S')} {msg}")
+from .waits import wait_for_ajax, wait_for_page_load, log
 
 
 MEDICARE_PATTERN = re.compile(r"^\d{10}$")
 IRN_PATTERN = re.compile(r"^\d$")
 TAB_RANGE_PATTERN = re.compile(r"(\d+)\s*-\s*(\d+)")
 
-# Form element IDs
 _FORM_IDS = [
     "guiForm:guiMedicareCardNumber",
     "guiForm:guiIndividualReferenceNumber",
@@ -27,7 +24,6 @@ _FORM_IDS = [
     "guiForm:gui_providerLocation",
 ]
 
-# Tab view CSS selectors (tried in order)
 _TAB_NAV_CSS = (
     "div[id*='tabView'] ul.ui-tabs-nav li a, "
     ".ui-tabs-nav li a, "
@@ -45,35 +41,18 @@ class MbsChecker:
         self.driver = driver
         self.config = config
         self.wait_timeout = config.session.element_wait_timeout
-        self.ajax_delay = config.session.ajax_stability_delay
         self._current_tab_text = None
 
     def _wait(self, condition, timeout=None):
         return WebDriverWait(self.driver, timeout or self.wait_timeout).until(condition)
 
-    def _wait_for_ajax(self, timeout=None):
-        """Wait for PrimeFaces AJAX queue to be empty."""
-        timeout = timeout or self.wait_timeout
-        try:
-            WebDriverWait(self.driver, timeout).until(
-                lambda d: d.execute_script(
-                    "return typeof PrimeFaces === 'undefined' || "
-                    "PrimeFaces.ajax.Queue.isEmpty()"
-                )
-            )
-        except Exception:
-            pass
-
     def _wait_for_page_ready(self, timeout=None):
-        """Wait for DOM complete + AJAX idle + all form elements clickable."""
-        timeout = timeout or self.config.session.page_load_timeout * 2
+        """Wait for DOM + AJAX idle + all form elements clickable + tabs present."""
+        timeout = timeout or self.wait_timeout
         log("Waiting for page to be fully loaded...")
 
-        WebDriverWait(self.driver, timeout).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
-
-        self._wait_for_ajax(timeout)
+        wait_for_page_load(self.driver, timeout)
+        wait_for_ajax(self.driver, timeout)
 
         for el_id in _FORM_IDS:
             self._wait(EC.element_to_be_clickable((By.ID, el_id)), timeout=timeout)
@@ -120,18 +99,19 @@ class MbsChecker:
         )
         if not consent_cb.is_selected():
             self.driver.execute_script("arguments[0].click();", consent_cb)
+            wait_for_ajax(self.driver)
 
         location_select = Select(
             self.driver.find_element(By.ID, "guiForm:gui_providerLocation")
         )
         location_select.select_by_value(self.config.mbs.provider_location)
+        wait_for_ajax(self.driver)
 
         log("Patient form filled")
 
     # -- MBS item selection ---------------------------------------------------
 
     def select_mbs_items(self, items: Optional[List[str]] = None):
-        """Select MBS items by navigating to correct tab and clicking checkboxes."""
         if items is None:
             items = self.config.mbs.items_to_check
         if len(items) > 5:
@@ -146,7 +126,6 @@ class MbsChecker:
         log(f"All {len(items)} MBS items selected")
 
     def _get_tab_ranges(self) -> List[Dict]:
-        """Parse tab headers fresh to avoid stale element references."""
         tabs = []
         tab_links = self.driver.find_elements(By.CSS_SELECTOR, _TAB_NAV_CSS)
 
@@ -169,7 +148,6 @@ class MbsChecker:
         return tabs
 
     def _switch_to_tab(self, padded: str):
-        """Switch to the tab containing the item. Skips if already active."""
         item_num = int(padded)
         tabs = self._get_tab_ranges()
 
@@ -196,7 +174,18 @@ class MbsChecker:
         except Exception:
             self.driver.execute_script("arguments[0].click();", target["element"])
 
-        self._wait_for_ajax()
+        wait_for_ajax(self.driver)
+
+        # Verify tab content loaded by checking for checkboxes in the active panel
+        try:
+            WebDriverWait(self.driver, 5).until(
+                lambda d: len(d.find_elements(By.CSS_SELECTOR,
+                    "div.ui-tabs-panel:not(.ui-helper-hidden) input[type='checkbox']"
+                )) > 0
+            )
+        except TimeoutException:
+            log("Warning: no checkboxes found in active tab panel")
+
         self._current_tab_text = target["text"]
 
     def _select_single_item(self, item_number: str):
@@ -214,8 +203,6 @@ class MbsChecker:
                 raise MbsCheckerError(f"Could not find MBS item {padded} in any tab")
 
     def _click_item_checkbox(self, padded_item: str):
-        """Find and click the checkbox for a specific MBS item number."""
-        # Try label-based lookup first (most common)
         for xpath in [
             f"//label[normalize-space(text())='{padded_item}']",
             f"//label[contains(text(), '{padded_item}')]",
@@ -227,19 +214,18 @@ class MbsChecker:
                     checkbox = self.driver.find_element(By.ID, checkbox_id)
                     if not checkbox.is_selected():
                         self.driver.execute_script("arguments[0].click();", checkbox)
-                    self._wait_for_ajax()
+                    wait_for_ajax(self.driver)
                     return
             except NoSuchElementException:
                 continue
 
-        # Fallback: checkbox next to text cell
         xpath = (f"//td[normalize-space(text())='{padded_item}']"
                  f"/preceding-sibling::td//input[@type='checkbox']")
         try:
             checkbox = self.driver.find_element(By.XPATH, xpath)
             if not checkbox.is_selected():
                 self.driver.execute_script("arguments[0].click();", checkbox)
-            self._wait_for_ajax()
+            wait_for_ajax(self.driver)
             return
         except NoSuchElementException:
             pass
@@ -247,7 +233,6 @@ class MbsChecker:
         raise NoSuchElementException(f"Checkbox for item {padded_item} not found")
 
     def _search_all_tabs(self, padded_item: str) -> bool:
-        """Search all tabs to find and select an item."""
         tabs = self._get_tab_ranges()
         for i in range(len(tabs)):
             try:
@@ -255,7 +240,7 @@ class MbsChecker:
                 if i >= len(fresh_tabs):
                     break
                 fresh_tabs[i]["element"].click()
-                self._wait_for_ajax()
+                wait_for_ajax(self.driver)
                 self._click_item_checkbox(padded_item)
                 self._current_tab_text = fresh_tabs[i]["text"]
                 log(f"Found and selected {padded_item} in tab {fresh_tabs[i]['text']}")
@@ -267,23 +252,34 @@ class MbsChecker:
     # -- Submit and results ---------------------------------------------------
 
     def submit_check(self):
-        """Click 'Check items' and handle confirmation dialog."""
         log("Submitting check items")
 
+        # Ensure AJAX from item selection is complete
+        wait_for_ajax(self.driver)
+
+        # Find button — try visible XPath first, fall back to hidden ID
         try:
-            check_btn = self._wait(EC.element_to_be_clickable((
+            btn = self._wait(EC.presence_of_element_located((
                 By.XPATH,
                 "//div[@id='guiForm:buttonsAndModal']"
                 "//input[@type='submit' and contains(@title, 'Check')]"
             )))
-            check_btn.click()
         except TimeoutException:
-            hidden_btn = self.driver.find_element(By.ID, "guiForm:gui_search3")
-            self.driver.execute_script("arguments[0].click();", hidden_btn)
+            try:
+                btn = self.driver.find_element(By.ID, "guiForm:gui_search3")
+            except NoSuchElementException:
+                raise MbsCheckerError("Check button not found on page")
 
-        self._wait_for_ajax()
+        # Scroll into view and click via JS (bypasses PrimeFaces overlay issues)
+        self.driver.execute_script(
+            "arguments[0].scrollIntoView({block: 'center'});", btn
+        )
+        wait_for_ajax(self.driver)
+        self.driver.execute_script("arguments[0].click();", btn)
+        log("Check button clicked (JS)")
 
-        # Handle multiple items confirmation dialog
+        wait_for_ajax(self.driver)
+
         try:
             dialog = self.driver.find_element(
                 By.ID, "guiForm:multipleMBSItemsConfirmDiag"
@@ -295,7 +291,13 @@ class MbsChecker:
                     "#guiForm\\:multipleMBSItemsConfirmDiag a.confirm-btn"
                 )))
                 continue_btn.click()
-                self._wait_for_ajax()
+                wait_for_ajax(self.driver)
+                # Wait for dialog to disappear
+                WebDriverWait(self.driver, 10).until(
+                    EC.invisibility_of_element_located(
+                        (By.ID, "guiForm:multipleMBSItemsConfirmDiag")
+                    )
+                )
         except NoSuchElementException:
             pass
 
@@ -333,15 +335,14 @@ class MbsChecker:
         return results
 
     def new_check(self):
-        """Click 'New check' to reset the form for another patient."""
         log("Starting new check")
         try:
             btn = self._wait(EC.element_to_be_clickable(
                 (By.ID, "guiForm:gui_searchAgain")
             ))
             btn.click()
-            self._wait_for_ajax()
-            self._wait(EC.presence_of_element_located(
+            wait_for_ajax(self.driver)
+            self._wait(EC.element_to_be_clickable(
                 (By.ID, "guiForm:guiMedicareCardNumber")
             ))
             log("Form reset for new check")
@@ -355,7 +356,6 @@ class MbsChecker:
         first_name: str,
         items: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
-        """Run the full check flow for a single patient."""
         self._wait_for_page_ready()
         self.fill_patient_form(medicare_number, irn, first_name)
         self.select_mbs_items(items)

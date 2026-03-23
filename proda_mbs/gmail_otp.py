@@ -136,13 +136,36 @@ class GmailOtpExtractor:
         except Exception as e:
             log(f"Warning: could not purge old emails: {e}")
 
-    def get_otp_code(self, max_wait: int = 60, poll_interval: int = 3) -> str | None:
-        """Poll Gmail for a fresh OTP code."""
-        time.sleep(5)  # Initial wait for email delivery
+    def mark_otp_requested(self):
+        """Record the timestamp when an OTP was requested.
+        Only emails arriving after this time will be accepted.
+
+        A 5-second buffer is subtracted to tolerate minor clock skew
+        between this machine and Gmail's servers (internalDate is set
+        by Google, not by the sending MTA).
+        """
+        self._otp_requested_at = int(time.time() * 1000) - 5000
+        log(f"OTP request timestamp set (with 5 s buffer)")
+
+    def get_otp_code(self, max_wait: int = 90, poll_interval: int = 3) -> str | None:
+        """Poll Gmail for a fresh OTP code that arrived after the request.
+
+        Waits for the email to arrive, verifies it's newer than the OTP
+        request timestamp, extracts and validates the 6-digit code, then
+        trashes the email before returning.
+        """
+        min_time = getattr(self, '_otp_requested_at', 0)
+
+        # Try immediately first — the email often arrives during the
+        # login submission + page-load time, so it may already be in
+        # the inbox by the time we get here.
+        code = self._try_extract_code(min_time)
+        if code:
+            return code
 
         elapsed = 0
         while elapsed < max_wait:
-            code = self._try_extract_code()
+            code = self._try_extract_code(min_time)
             if code:
                 return code
             log(f"Waiting for OTP email... ({elapsed}s/{max_wait}s)")
@@ -151,8 +174,14 @@ class GmailOtpExtractor:
 
         return None
 
-    def _try_extract_code(self) -> str | None:
-        """Extract OTP from the most recent PRODA verification email."""
+    def _try_extract_code(self, min_timestamp: int = 0) -> str | None:
+        """Extract OTP from a fresh PRODA verification email.
+
+        Args:
+            min_timestamp: Only accept emails with internalDate >= this
+                           value (milliseconds since epoch). Ensures we
+                           don't grab a stale code from a previous request.
+        """
         query = f"from:{self.SENDER} subject:{self.OTP_SUBJECT} newer_than:2m"
         results = self.service.users().messages().list(
             userId="me", q=query
@@ -167,6 +196,12 @@ class GmailOtpExtractor:
                 userId="me", id=message["id"]
             ).execute()
 
+            # Verify email arrived after we requested the OTP
+            internal_date = int(msg.get("internalDate", 0))
+            if min_timestamp and internal_date < min_timestamp:
+                log(f"Skipping stale email (arrived {internal_date} < requested {min_timestamp})")
+                continue
+
             try:
                 data = self._get_body_data(msg["payload"])
                 if not data:
@@ -179,7 +214,7 @@ class GmailOtpExtractor:
                 if strong_tag:
                     code = strong_tag.get_text().strip()
                     if self.OTP_PATTERN.match(code):
-                        log(f"Found OTP: {code}")
+                        log(f"Found fresh OTP: {code}")
                         self.service.users().messages().trash(
                             userId="me", id=message["id"]
                         ).execute()
