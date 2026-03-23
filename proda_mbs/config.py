@@ -35,7 +35,6 @@ class SessionConfig:
     keepalive_interval_seconds: int = 300
     page_load_timeout: int = 30
     element_wait_timeout: int = 15
-    ajax_stability_delay: float = 1.0
     retry_count: int = 3
 
 
@@ -43,6 +42,7 @@ class SessionConfig:
 class BrowserConfig:
     type: str = "firefox"  # "firefox" or "chrome"
     headless: bool = False
+    driver_path: str = ""  # Path to browser driver executable (leave empty for auto-detect)
 
 
 @dataclass
@@ -73,9 +73,12 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
             with open(config_path, "r") as f:
                 data = yaml.safe_load(f) or {}
         except PermissionError:
+            if os.name == "nt":
+                fix_hint = f"  Fix: right-click '{config_path}' > Properties > Security > grant your user read access"
+            else:
+                fix_hint = f"  Fix with: sudo chown $(whoami) '{config_path}'"
             raise ConfigError(
-                f"Permission denied reading '{config_path}'.\n"
-                f"  Fix with: sudo chown $(whoami) '{config_path}'"
+                f"Permission denied reading '{config_path}'.\n{fix_hint}"
             )
 
         proda = data.get("proda", {})
@@ -106,9 +109,6 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
         config.session.element_wait_timeout = session.get(
             "element_wait_timeout", config.session.element_wait_timeout
         )
-        config.session.ajax_stability_delay = session.get(
-            "ajax_stability_delay", config.session.ajax_stability_delay
-        )
         config.session.retry_count = session.get(
             "retry_count", config.session.retry_count
         )
@@ -116,6 +116,7 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
         browser = data.get("browser", {})
         config.browser.type = browser.get("type", config.browser.type)
         config.browser.headless = browser.get("headless", config.browser.headless)
+        config.browser.driver_path = browser.get("driver_path", config.browser.driver_path)
 
     # Environment variable fallback for credentials
     config.proda.username = os.environ.get("PRODA_USERNAME", config.proda.username)
@@ -181,9 +182,17 @@ def create_driver(browser_config: BrowserConfig) -> webdriver.Remote:
         options = webdriver.ChromeOptions()
         if browser_config.headless:
             options.add_argument("--headless=new")
+        if browser_config.driver_path:
+            from selenium.webdriver.chrome.service import Service as ChromeService
+            service = ChromeService(executable_path=browser_config.driver_path)
+            return webdriver.Chrome(service=service, options=options)
         return webdriver.Chrome(options=options)
     else:
         options = webdriver.FirefoxOptions()
         if browser_config.headless:
             options.add_argument("--headless")
+        if browser_config.driver_path:
+            from selenium.webdriver.firefox.service import Service as GeckoService
+            service = GeckoService(executable_path=browser_config.driver_path)
+            return webdriver.Firefox(service=service, options=options)
         return webdriver.Firefox(options=options)

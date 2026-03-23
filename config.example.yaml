@@ -28,3 +28,4 @@ session:
 browser:
   type: "firefox"       # "firefox" or "chrome"
   headless: false       # Run browser in headless mode
+  driver_path: ""       # Path to browser driver executable (leave empty for auto-detect)

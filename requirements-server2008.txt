@@ -1,0 +1,15 @@
+# Pinned dependencies for Windows Server 2008 R2 (Python 3.8)
+# These versions are the last known releases compatible with Python 3.8
+# and the TLS/SSL stack available on Server 2008 R2.
+#
+# DO NOT upgrade these versions without verifying Python 3.8 compatibility.
+
+selenium==4.9.1
+pyyaml==6.0.1
+google-api-python-client==2.108.0
+google-auth-oauthlib==1.2.0
+google-auth==2.27.0
+beautifulsoup4==4.12.3
+requests==2.31.0
+urllib3==1.26.18
+certifi==2023.11.17
