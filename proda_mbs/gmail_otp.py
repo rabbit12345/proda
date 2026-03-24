@@ -13,10 +13,7 @@ from googleapiclient.discovery import build
 from bs4 import BeautifulSoup
 
 from .config import GmailConfig
-
-
-def log(msg: str):
-    print(f"{time.strftime('%d/%m/%y %H:%M:%S')} {msg}")
+from .waits import log
 
 
 class GmailAuthError(Exception):
@@ -34,6 +31,7 @@ class GmailOtpExtractor:
 
     def __init__(self, config: GmailConfig):
         self.config = config
+        self._otp_requested_at: int = 0
         self.service = self._build_service()
 
     def _build_service(self):
@@ -154,20 +152,17 @@ class GmailOtpExtractor:
         request timestamp, extracts and validates the 6-digit code, then
         trashes the email before returning.
         """
-        min_time = getattr(self, '_otp_requested_at', 0)
+        min_time = self._otp_requested_at
 
-        # Try immediately first — the email often arrives during the
-        # login submission + page-load time, so it may already be in
-        # the inbox by the time we get here.
-        code = self._try_extract_code(min_time)
-        if code:
-            return code
-
+        # Try immediately — the email often arrives during login
+        # submission + page-load time, so it may already be in the inbox.
         elapsed = 0
-        while elapsed < max_wait:
+        while True:
             code = self._try_extract_code(min_time)
             if code:
                 return code
+            if elapsed >= max_wait:
+                break
             log(f"Waiting for OTP email... ({elapsed}s/{max_wait}s)")
             time.sleep(poll_interval)
             elapsed += poll_interval

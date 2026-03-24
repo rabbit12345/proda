@@ -226,9 +226,7 @@ class ProdaAuthenticator:
         """Check if the OTP entry field is already visible,
         meaning the portal sent OTP to the default channel."""
         try:
-            WebDriverWait(self.driver, timeout).until(
-                EC.presence_of_element_located((By.ID, "otppswd"))
-            )
+            self._wait(EC.presence_of_element_located((By.ID, "otppswd")), timeout=timeout)
             return True
         except TimeoutException:
             return False
@@ -305,9 +303,7 @@ class ProdaAuthenticator:
         ]
         for by, selector in resend_selectors:
             try:
-                el = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((by, selector))
-                )
+                el = self._wait(EC.element_to_be_clickable((by, selector)), timeout=5)
                 self.gmail_extractor.mark_otp_requested()
                 el.click()
                 log("Clicked 'Didn't get your code?' link")
@@ -339,8 +335,9 @@ class ProdaAuthenticator:
             otp_field.send_keys(code)
 
             # Verify the field accepted all characters
-            WebDriverWait(self.driver, 5).until(
-                lambda d: d.find_element(By.ID, "otppswd").get_attribute("value") == code
+            self._wait(
+                lambda d: d.find_element(By.ID, "otppswd").get_attribute("value") == code,
+                timeout=5
             )
 
             # Wait for any client-side validation AJAX
@@ -363,11 +360,6 @@ class ProdaAuthenticator:
             url = self.driver.current_url
             log(f"Post-OTP state: title='{title}' url='{url}'")
 
-            otp_error = self._check_otp_error_message()
-            if otp_error:
-                log(f"OTP rejected: {otp_error}")
-                return False
-
             error_msg = self._find_error_on_page()
             if error_msg:
                 log(f"OTP error: {error_msg}")
@@ -378,12 +370,3 @@ class ProdaAuthenticator:
                 return True
 
             return False
-
-    def _check_otp_error_message(self) -> str | None:
-        try:
-            body_text = self.driver.find_element(By.TAG_NAME, "body").text
-            if "verification code is incorrect or expired" in body_text.lower():
-                return "Your second stage verification code is incorrect or expired"
-        except Exception:
-            pass
-        return None

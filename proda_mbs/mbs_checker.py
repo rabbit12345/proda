@@ -36,6 +36,19 @@ class MbsCheckerError(Exception):
     pass
 
 
+class InvalidPatientError(MbsCheckerError):
+    """Raised when the portal rejects patient details (e.g. invalid Medicare number)."""
+    pass
+
+
+_PATIENT_ERROR_PATTERNS = [
+    "medicare card number entered is not valid",
+    "individual reference number is not valid",
+    "please check the details and try again",
+    "patient details are not valid",
+]
+
+
 class MbsChecker:
     def __init__(self, driver, config: AppConfig):
         self.driver = driver
@@ -178,10 +191,11 @@ class MbsChecker:
 
         # Verify tab content loaded by checking for checkboxes in the active panel
         try:
-            WebDriverWait(self.driver, 5).until(
+            self._wait(
                 lambda d: len(d.find_elements(By.CSS_SELECTOR,
                     "div.ui-tabs-panel:not(.ui-helper-hidden) input[type='checkbox']"
-                )) > 0
+                )) > 0,
+                timeout=5
             )
         except TimeoutException:
             log("Warning: no checkboxes found in active tab panel")
@@ -233,8 +247,8 @@ class MbsChecker:
         raise NoSuchElementException(f"Checkbox for item {padded_item} not found")
 
     def _search_all_tabs(self, padded_item: str) -> bool:
-        tabs = self._get_tab_ranges()
-        for i in range(len(tabs)):
+        i = 0
+        while True:
             try:
                 fresh_tabs = self._get_tab_ranges()
                 if i >= len(fresh_tabs):
@@ -246,6 +260,7 @@ class MbsChecker:
                 log(f"Found and selected {padded_item} in tab {fresh_tabs[i]['text']}")
                 return True
             except (NoSuchElementException, TimeoutException):
+                i += 1
                 continue
         return False
 
@@ -274,43 +289,116 @@ class MbsChecker:
         self.driver.execute_script(
             "arguments[0].scrollIntoView({block: 'center'});", btn
         )
-        wait_for_ajax(self.driver)
         self.driver.execute_script("arguments[0].click();", btn)
         log("Check button clicked (JS)")
 
-        wait_for_ajax(self.driver)
-
+        # Wait for any outcome: results table, no-results label,
+        # confirmation dialog, or validation error text.
+        # The portal responds instantly so we just need to detect
+        # whichever DOM change appears first.
+        timeout = self.config.session.page_load_timeout
         try:
-            dialog = self.driver.find_element(
-                By.ID, "guiForm:multipleMBSItemsConfirmDiag"
+            outcome = self._wait(
+                lambda d: self._detect_submit_outcome(d),
+                timeout=timeout
             )
-            if dialog.is_displayed():
-                log("Multiple items confirmation dialog - clicking Continue")
-                continue_btn = self._wait(EC.element_to_be_clickable((
-                    By.CSS_SELECTOR,
-                    "#guiForm\\:multipleMBSItemsConfirmDiag a.confirm-btn"
-                )))
-                continue_btn.click()
-                wait_for_ajax(self.driver)
-                # Wait for dialog to disappear
-                WebDriverWait(self.driver, 10).until(
-                    EC.invisibility_of_element_located(
-                        (By.ID, "guiForm:multipleMBSItemsConfirmDiag")
-                    )
+        except TimeoutException:
+            self._check_patient_validation_error()
+            raise MbsCheckerError("No response from portal after submission")
+
+        if outcome == "dialog":
+            log("Multiple items confirmation dialog - clicking Continue")
+            continue_btn = self._wait(EC.element_to_be_clickable((
+                By.CSS_SELECTOR,
+                "#guiForm\\:multipleMBSItemsConfirmDiag a.confirm-btn"
+            )))
+            continue_btn.click()
+            # After dialog, wait for results or no-results
+            try:
+                self._wait(
+                    lambda d: (
+                        d.find_elements(By.ID, "guiForm:guiMbsItemNumberSearchResults")
+                        or self._is_no_results_visible(d)
+                    ),
+                    timeout=timeout
                 )
+            except TimeoutException:
+                self._check_patient_validation_error()
+                raise MbsCheckerError("Results table did not appear after confirmation")
+
+        self._check_patient_validation_error()
+        log("Results table loaded")
+
+    def _detect_submit_outcome(self, driver):
+        """Return a truthy string indicating which outcome appeared after submit."""
+        if driver.find_elements(By.ID, "guiForm:guiMbsItemNumberSearchResults"):
+            return "results"
+        if self._is_no_results_visible(driver):
+            return "no_results"
+        try:
+            dialog = driver.find_element(By.ID, "guiForm:multipleMBSItemsConfirmDiag")
+            if dialog.is_displayed():
+                return "dialog"
         except NoSuchElementException:
             pass
-
+        # Check for validation error text without waiting
         try:
-            self._wait(
-                EC.presence_of_element_located(
-                    (By.ID, "guiForm:guiMbsItemNumberSearchResults")
-                ),
-                timeout=self.config.session.page_load_timeout
-            )
-            log("Results table loaded")
-        except TimeoutException:
-            raise MbsCheckerError("Results table did not appear after submission")
+            body = driver.find_element(By.TAG_NAME, "body").text.lower()
+            for pattern in _PATIENT_ERROR_PATTERNS:
+                if pattern in body:
+                    return "validation_error"
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _is_no_results_visible(driver) -> bool:
+        """Check if the 'No results found' label is visible on the page."""
+        try:
+            el = driver.find_element(By.ID, "guiForm:noResultsLabel")
+            return el.is_displayed()
+        except NoSuchElementException:
+            return False
+
+    def _check_patient_validation_error(self):
+        """Raise InvalidPatientError if the portal shows a validation message
+        or the 'No results found' label is visible.  Clears patient fields
+        (but leaves MBS item selection intact) before raising."""
+        error_msg = None
+
+        if self._is_no_results_visible(self.driver):
+            error_msg = "No results found — check patient details"
+
+        if not error_msg:
+            try:
+                body = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+                for pattern in _PATIENT_ERROR_PATTERNS:
+                    if pattern in body:
+                        error_msg = pattern
+                        break
+            except Exception:
+                pass
+
+        if error_msg:
+            log(f"Portal validation error: {error_msg}")
+            self._clear_patient_fields()
+            raise InvalidPatientError(error_msg)
+
+    def _clear_patient_fields(self):
+        """Clear Medicare, IRN and name fields via JS to avoid stale element
+        references after AJAX DOM replacement.  Leaves MBS item selection intact."""
+        self.driver.execute_script("""
+            var ids = [
+                'guiForm:guiMedicareCardNumber',
+                'guiForm:guiIndividualReferenceNumber',
+                'guiForm:guiFirstName'
+            ];
+            ids.forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) { el.value = ''; }
+            });
+        """)
+        log("Patient fields cleared (item selection preserved)")
 
     def extract_results(self) -> List[Dict[str, str]]:
         log("Extracting results")

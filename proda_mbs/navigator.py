@@ -122,7 +122,7 @@ class HposNavigator:
             # already confirms we are on the right page.
             try:
                 wait_for_page_load(self.driver, timeout=5)
-            except (TimeoutException, Exception) as e:
+            except Exception as e:
                 log(f"Page readyState wait skipped ({e}) — title confirmed, continuing")
             log(f"Reached HPOS landing page ({self.driver.current_url})")
         except TimeoutException:

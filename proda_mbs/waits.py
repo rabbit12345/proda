@@ -34,12 +34,12 @@ def wait_for_page_load(driver, timeout: int = 30):
         "try { return document.readyState; } "
         "catch(e) { return 'unknown'; }"
     )
+    # Set once before the loop so execute_script cannot hang
+    # longer than 5 seconds even if the browser is blocked.
+    driver.set_script_timeout(5)
     end = time.time() + timeout
     while time.time() < end:
         try:
-            # Set a per-command timeout so execute_script cannot hang
-            # longer than 5 seconds even if the browser is blocked.
-            driver.set_script_timeout(5)
             state = driver.execute_script(script)
             if state == "complete":
                 return
