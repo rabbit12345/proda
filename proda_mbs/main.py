@@ -12,6 +12,15 @@ from .session_keeper import SessionKeeper
 from .waits import log
 
 _MAX_RECOVERY_ATTEMPTS = 3
+_HPOS_HOST = "www2.medicareaustralia.gov.au"
+
+
+def _still_on_hpos(driver) -> bool:
+    """Return True if the browser is still on an HPOS page."""
+    try:
+        return _HPOS_HOST in driver.current_url
+    except Exception:
+        return True  # assume OK if we can't read the URL
 
 
 def prompt_patient_details() -> tuple[str, str, str] | None:
@@ -88,11 +97,12 @@ def _recover_session(
     log("Attempting session recovery (re-login)...")
     old_session_keeper.stop()
 
-    auth = ProdaAuthenticator(driver, config)
-    auth.login()
+    with driver_lock:
+        auth = ProdaAuthenticator(driver, config)
+        auth.login()
 
-    navigator = HposNavigator(driver, config)
-    navigator.navigate_to_mbs_checker_full()
+        navigator = HposNavigator(driver, config)
+        navigator.navigate_to_mbs_checker_full()
 
     new_sk = SessionKeeper(driver, config.session.keepalive_interval_seconds,
                            driver_lock=driver_lock)
@@ -110,13 +120,16 @@ def run_single_check(
     irn: str,
     first_name: str,
     items: list[str] | None = None,
+    driver_lock: threading.Lock | None = None,
 ):
     """Run a single patient check and display results.
 
     Raises InvalidPatientError so the caller can reset to patient entry.
     """
     try:
-        results = checker.check_patient(medicare, irn, first_name, items)
+        lock = driver_lock or threading.Lock()
+        with lock:
+            results = checker.check_patient(medicare, irn, first_name, items)
         session_keeper.reset()
         print(format_results(medicare, first_name, results))
         return results
@@ -211,7 +224,8 @@ def main():
         if args.medicare and args.irn and args.name:
             run_single_check(
                 checker, session_keeper,
-                args.medicare, args.irn, args.name, args.items
+                args.medicare, args.irn, args.name, args.items,
+                driver_lock=driver_lock,
             )
             print("\nCheck complete. Enter another patient or 'q' to quit.")
 
@@ -255,15 +269,22 @@ def main():
 
             if not first_check and not skip_form_reset:
                 try:
-                    checker.new_check()
+                    with driver_lock:
+                        checker.new_check()
                 except MbsCheckerError:
                     log("Could not reset form, attempting page reload")
                     try:
-                        navigator.navigate_to_mbs_checker()
+                        with driver_lock:
+                            navigator.navigate_to_mbs_checker()
                     except NavigationError:
                         if not session_keeper.is_session_valid:
                             log("Session lost during recovery, will re-login next iteration")
                             continue
+                        with driver_lock:
+                            if not _still_on_hpos(driver):
+                                log("Navigation failed and browser left HPOS — marking session lost")
+                                session_keeper.mark_session_lost()
+                                continue
                         log("Navigation failed after form reset error")
                         continue
 
@@ -271,7 +292,8 @@ def main():
             try:
                 result = run_single_check(
                     checker, session_keeper,
-                    patient[0], patient[1], patient[2], args.items
+                    patient[0], patient[1], patient[2], args.items,
+                    driver_lock=driver_lock,
                 )
             except InvalidPatientError as e:
                 print(f"\n  ** {e}")
@@ -281,6 +303,15 @@ def main():
                 # Skip new_check() next iteration so items stay intact.
                 skip_form_reset = True
                 continue
+
+            if result is None and session_keeper.is_session_valid:
+                # Check whether the failure was due to the session expiring
+                # (browser navigated away from HPOS) rather than a transient error.
+                with driver_lock:
+                    if not _still_on_hpos(driver):
+                        log("Check failed and browser left HPOS — marking session lost")
+                        session_keeper.mark_session_lost()
+
             first_check = False
 
     except LoginError as e:

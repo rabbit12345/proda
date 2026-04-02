@@ -77,6 +77,19 @@ class MbsChecker:
 
         log("Page fully loaded and ready")
 
+    def _set_field_value(self, element, value: str):
+        """Set a form field value via JS and dispatch events so PrimeFaces
+        JSF validation and AJAX listeners fire reliably."""
+        self.driver.execute_script(
+            "arguments[0].value = arguments[1]", element, value
+        )
+        self.driver.execute_script("""
+            var el = arguments[0];
+            el.dispatchEvent(new Event('input', {bubbles: true}));
+            el.dispatchEvent(new Event('change', {bubbles: true}));
+            el.dispatchEvent(new Event('blur', {bubbles: true}));
+        """, element)
+
     # -- Patient form ---------------------------------------------------------
 
     def fill_patient_form(self, medicare_number: str, irn: str, first_name: str):
@@ -94,18 +107,18 @@ class MbsChecker:
         mc_field = self._wait(EC.element_to_be_clickable(
             (By.ID, "guiForm:guiMedicareCardNumber")
         ))
-        mc_field.clear()
-        mc_field.send_keys(medicare_number)
+        mc_field.click()
+        self._set_field_value(mc_field, medicare_number)
 
         irn_field = self.driver.find_element(
             By.ID, "guiForm:guiIndividualReferenceNumber"
         )
-        irn_field.clear()
-        irn_field.send_keys(irn)
+        irn_field.click()
+        self._set_field_value(irn_field, irn)
 
         name_field = self.driver.find_element(By.ID, "guiForm:guiFirstName")
-        name_field.clear()
-        name_field.send_keys(first_name)
+        name_field.click()
+        self._set_field_value(name_field, first_name)
 
         consent_cb = self.driver.find_element(
             By.ID, "guiForm:gui_patientConsentGiven"
@@ -395,7 +408,12 @@ class MbsChecker:
             ];
             ids.forEach(function(id) {
                 var el = document.getElementById(id);
-                if (el) { el.value = ''; }
+                if (el) {
+                    el.value = '';
+                    el.dispatchEvent(new Event('input', {bubbles: true}));
+                    el.dispatchEvent(new Event('change', {bubbles: true}));
+                    el.dispatchEvent(new Event('blur', {bubbles: true}));
+                }
             });
         """)
         log("Patient fields cleared (item selection preserved)")
