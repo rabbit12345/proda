@@ -451,8 +451,13 @@ class MbsChecker:
 
     def extract_results(self) -> List[Dict[str, str]]:
         log("Extracting results")
-        table = self.driver.find_element(
-            By.ID, "guiForm:guiMbsItemNumberSearchResults"
+        # Wait for results table to be present (may have brief delay after AJAX)
+        timeout = self.config.session.page_load_timeout
+        table = self._wait(
+            EC.presence_of_element_located(
+                (By.ID, "guiForm:guiMbsItemNumberSearchResults")
+            ),
+            timeout=timeout
         )
         tbody = table.find_element(
             By.ID, "guiForm:guiMbsItemNumberSearchResults:tbody_element"
