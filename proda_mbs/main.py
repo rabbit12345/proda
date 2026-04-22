@@ -397,14 +397,8 @@ def main():
                 print(f"\n  ** {e}")
                 print("  Patient fields cleared — item selection preserved.")
                 print("  Please re-enter patient details.\n")
-                # Reset form to clean state
-                try:
-                    with driver_lock:
-                        checker.new_check()
-                    log("Form reset after invalid patient error")
-                except Exception as reset_err:
-                    log(f"Could not reset form after invalid patient: {reset_err}")
-                # Skip new_check() next iteration since we just reset the form.
+                # InvalidPatientError already cleared patient fields via JS.
+                # Skip form reset — no need to click button or wait for form.
                 skip_form_reset = True
                 _prime_clipboard_async()
                 _refocus_console_async()
