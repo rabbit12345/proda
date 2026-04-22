@@ -375,8 +375,14 @@ def main():
                 print(f"\n  ** {e}")
                 print("  Patient fields cleared — item selection preserved.")
                 print("  Please re-enter patient details.\n")
-                # Fields already cleared by mbs_checker, items still selected.
-                # Skip new_check() next iteration so items stay intact.
+                # Reset form to clean state
+                try:
+                    with driver_lock:
+                        checker.new_check()
+                    log("Form reset after invalid patient error")
+                except Exception as reset_err:
+                    log(f"Could not reset form after invalid patient: {reset_err}")
+                # Skip new_check() next iteration since we just reset the form.
                 skip_form_reset = True
                 _prime_clipboard()
                 _refocus_console()
