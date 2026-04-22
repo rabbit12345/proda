@@ -462,11 +462,16 @@ class MbsChecker:
         first_name: str,
         items: Optional[List[str]] = None,
     ) -> List[Dict[str, str]]:
-        self._wait_for_page_ready()
-        self.fill_patient_form(medicare_number, irn, first_name)
-        self.select_mbs_items(items)
-        self.submit_check()
-        return self.extract_results()
+        try:
+            self._wait_for_page_ready()
+            self.fill_patient_form(medicare_number, irn, first_name)
+            self.select_mbs_items(items)
+            self.submit_check()
+            return self.extract_results()
+        except MbsCheckerError:
+            raise
+        except TimeoutException as e:
+            raise MbsCheckerError(f"Page timed out during check: {e.msg or 'timeout'}") from e
 
 
 def format_results(
