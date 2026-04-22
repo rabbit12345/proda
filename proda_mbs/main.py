@@ -81,6 +81,28 @@ def _quit_driver_with_timeout(driver, timeout: int = 8):
         log("Browser did not close within timeout — continuing anyway")
 
 
+def _prime_clipboard_async():
+    """Run clipboard priming in background thread with timeout."""
+    def _do_prime():
+        try:
+            _prime_clipboard()
+        except Exception:
+            pass
+    t = threading.Thread(target=_do_prime, daemon=True)
+    t.start()
+
+
+def _refocus_console_async():
+    """Run console refocus in background thread with timeout."""
+    def _do_refocus():
+        try:
+            _refocus_console()
+        except Exception:
+            pass
+    t = threading.Thread(target=_do_refocus, daemon=True)
+    t.start()
+
+
 def _still_on_hpos(driver) -> bool:
     """Return True if the browser is still on an HPOS page."""
     try:
@@ -281,8 +303,8 @@ def main():
 
         # Start session keep-alive
         def _after_ping():
-            _prime_clipboard()
-            _refocus_console()
+            _prime_clipboard_async()
+            _refocus_console_async()
 
         session_keeper = SessionKeeper(
             driver, config.session.keepalive_interval_seconds,
@@ -384,12 +406,12 @@ def main():
                     log(f"Could not reset form after invalid patient: {reset_err}")
                 # Skip new_check() next iteration since we just reset the form.
                 skip_form_reset = True
-                _prime_clipboard()
-                _refocus_console()
+                _prime_clipboard_async()
+                _refocus_console_async()
                 continue
 
-            _prime_clipboard()
-            _refocus_console()
+            _prime_clipboard_async()
+            _refocus_console_async()
 
             if result is None and session_keeper.is_session_valid:
                 # Check whether the failure was due to the session expiring
