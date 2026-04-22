@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import sys
 import threading
 
@@ -13,6 +14,71 @@ from .waits import log
 
 _MAX_RECOVERY_ATTEMPTS = 3
 _HPOS_HOST = "www2.medicareaustralia.gov.au"
+
+
+def _prime_clipboard():
+    """Force delayed clipboard rendering held by the browser.
+
+    After Selenium automation Chrome/Firefox becomes the clipboard owner
+    with delayed rendering.  The first Ctrl+V in the console sends
+    WM_RENDERFORMAT to Chrome, but Chrome isn't processing Windows messages
+    yet so the request silently fails.  Calling GetClipboardData here forces
+    Chrome to materialise the data now, while we still have the driver
+    connection active, so all subsequent pastes work immediately.
+    """
+    try:
+        u32 = ctypes.windll.user32
+        CF_UNICODETEXT = 13
+        if not u32.IsClipboardFormatAvailable(CF_UNICODETEXT):
+            return
+        if not u32.OpenClipboard(None):
+            return
+        try:
+            u32.GetClipboardData(CF_UNICODETEXT)  # triggers WM_RENDERFORMAT
+        finally:
+            u32.CloseClipboard()
+    except Exception:
+        pass
+
+
+
+def _refocus_console():
+    """Bring the console window to the foreground after browser automation.
+
+    SetForegroundWindow is silently ignored by Windows when the calling
+    process is not the current foreground owner.  Temporarily attaching
+    our thread input to the foreground thread bypasses that restriction.
+    """
+    try:
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if not hwnd:
+            return
+        u32 = ctypes.windll.user32
+        k32 = ctypes.windll.kernel32
+        foreground_hwnd = u32.GetForegroundWindow()
+        foreground_tid = u32.GetWindowThreadProcessId(foreground_hwnd, None)
+        current_tid = k32.GetCurrentThreadId()
+        attached = False
+        if foreground_tid and foreground_tid != current_tid:
+            u32.AttachThreadInput(foreground_tid, current_tid, True)
+            attached = True
+        try:
+            u32.BringWindowToTop(hwnd)
+            u32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            u32.SetForegroundWindow(hwnd)
+        finally:
+            if attached:
+                u32.AttachThreadInput(foreground_tid, current_tid, False)
+    except Exception:
+        pass
+
+
+def _quit_driver_with_timeout(driver, timeout: int = 8):
+    t = threading.Thread(target=driver.quit, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        log("Browser did not close within timeout — continuing anyway")
 
 
 def _still_on_hpos(driver) -> bool:
@@ -88,6 +154,7 @@ def _recover_session(
     config,
     old_session_keeper: SessionKeeper,
     driver_lock: threading.Lock,
+    after_ping=None,
 ) -> tuple[SessionKeeper, MbsChecker, HposNavigator]:
     """Re-login and navigate back to MBS checker after session loss.
 
@@ -105,10 +172,12 @@ def _recover_session(
         navigator.navigate_to_mbs_checker_full()
 
     new_sk = SessionKeeper(driver, config.session.keepalive_interval_seconds,
-                           driver_lock=driver_lock)
+                           driver_lock=driver_lock,
+                           after_ping=after_ping)
     new_sk.start()
 
     checker = MbsChecker(driver, config)
+    new_sk.set_keepalive_action(checker.new_check)
     log("Session recovery successful")
     return new_sk, checker, navigator
 
@@ -211,14 +280,20 @@ def main():
         navigator.navigate_to_mbs_checker_full()
 
         # Start session keep-alive
+        def _after_ping():
+            _prime_clipboard()
+            _refocus_console()
+
         session_keeper = SessionKeeper(
             driver, config.session.keepalive_interval_seconds,
             driver_lock=driver_lock,
+            after_ping=_after_ping,
         )
         session_keeper.start()
 
         # Create checker
         checker = MbsChecker(driver, config)
+        session_keeper.set_keepalive_action(checker.new_check)
 
         # Single check mode
         if args.medicare and args.irn and args.name:
@@ -251,6 +326,7 @@ def main():
                 try:
                     session_keeper, checker, navigator = _recover_session(
                         driver, config, session_keeper, driver_lock,
+                        after_ping=_after_ping,
                     )
                     first_check = True
                     recovery_attempts = 0
@@ -302,7 +378,12 @@ def main():
                 # Fields already cleared by mbs_checker, items still selected.
                 # Skip new_check() next iteration so items stay intact.
                 skip_form_reset = True
+                _prime_clipboard()
+                _refocus_console()
                 continue
+
+            _prime_clipboard()
+            _refocus_console()
 
             if result is None and session_keeper.is_session_valid:
                 # Check whether the failure was due to the session expiring
@@ -326,10 +407,7 @@ def main():
         if session_keeper:
             session_keeper.stop()
         log("Closing browser...")
-        try:
-            driver.quit()
-        except Exception:
-            pass
+        _quit_driver_with_timeout(driver)
         log("Done.")
 
 

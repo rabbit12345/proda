@@ -31,7 +31,7 @@ _SESSION_LOST_URL_PATTERNS = (
     "logged-out",
 )
 
-_MAX_CONSECUTIVE_FAILURES = 2
+_MAX_CONSECUTIVE_FAILURES = 3
 
 
 class SessionKeeper:
@@ -48,10 +48,13 @@ class SessionKeeper:
     )
 
     def __init__(self, driver, interval_seconds: int = 300,
-                 driver_lock: threading.Lock | None = None):
+                 driver_lock: threading.Lock | None = None,
+                 after_ping=None):
         self.driver = driver
         self.interval = interval_seconds
         self.driver_lock = driver_lock or threading.Lock()
+        self._after_ping = after_ping
+        self._keepalive_action = None
         self._timer = None
         self._running = False
         self._session_lost = threading.Event()
@@ -88,6 +91,10 @@ class SessionKeeper:
                 self._consecutive_failures = 0
                 self._schedule_next_locked()
 
+    def set_keepalive_action(self, action):
+        """Set or update the keep-alive action (typically form reset)."""
+        self._keepalive_action = action
+
     def _schedule_next(self):
         with self._schedule_lock:
             self._schedule_next_locked()
@@ -99,6 +106,13 @@ class SessionKeeper:
             self._timer = threading.Timer(self.interval, self._ping, args=[gen])
             self._timer.daemon = True
             self._timer.start()
+
+    def _on_ping_success(self):
+        """Reset failure counter, run after-ping hook, and schedule next tick."""
+        self._consecutive_failures = 0
+        if self._after_ping:
+            self._after_ping()
+        self._schedule_next()
 
     def _ping(self, generation):
         if not self._running:
@@ -120,10 +134,19 @@ class SessionKeeper:
                         self._signal_session_lost()
                         return
 
-                    # ── 2. fetch keepalive ping ──────────────────────────────
+                    # ── 2. keep-alive action (form reset preferred over fetch) ──
+                    if self._keepalive_action:
+                        self._keepalive_action()
+                        log("Session keep-alive: form reset successful")
+                        self._on_ping_success()
+                        return
+
+                    # ── 3. fallback fetch keepalive ping ──────────────────────
                     # Use execute_async_script + fetch instead of synchronous
                     # XHR (which is deprecated and is killed by the 5-second
                     # script_timeout set by wait_for_page_load).
+                    # Ensure async script timeout is long enough; wait_for_page_load
+                    # may have reset it to 5 s, so we set it here once per tick.
                     self.driver.set_script_timeout(15)
                     result = self.driver.execute_async_script(
                         "var done = arguments[arguments.length - 1];"
@@ -138,7 +161,6 @@ class SessionKeeper:
                         "  done({status:-1, url:'', body:String(e)});"
                         "});"
                     )
-                    self.driver.set_script_timeout(5)
                     status = result.get("status", -1)
                     response_url = (result.get("url") or "").lower()
                     body = (result.get("body", "") or "").lower()
@@ -154,8 +176,7 @@ class SessionKeeper:
 
                     if status == 200 and not self._body_indicates_session_lost(body):
                         log("Session keep-alive ping successful")
-                        self._consecutive_failures = 0
-                        self._schedule_next()
+                        self._on_ping_success()
                         return
 
                     log(f"Session keep-alive ping: status={status} "
