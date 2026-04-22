@@ -46,6 +46,11 @@ _PATIENT_ERROR_PATTERNS = [
     "individual reference number is not valid",
     "please check the details and try again",
     "patient details are not valid",
+    "patient details do not match",
+    "patient could not be matched",
+    "patient not found",
+    "no patient record",
+    "unable to match patient",
 ]
 
 
@@ -382,6 +387,18 @@ class MbsChecker:
         if self._is_no_results_visible(self.driver):
             error_msg = "No results found — check patient details"
 
+        # Check for field validation errors (e.g., highlighted input fields with error messages)
+        if not error_msg:
+            try:
+                error_elements = self.driver.find_elements(By.CLASS_NAME, "fielderror")
+                if error_elements:
+                    error_text = " ".join(el.text for el in error_elements if el.text)
+                    if error_text:
+                        error_msg = f"Field validation error: {error_text[:100]}"
+            except Exception:
+                pass
+
+        # Check for error patterns in page body text
         if not error_msg:
             try:
                 body = self.driver.find_element(By.TAG_NAME, "body").text.lower()
