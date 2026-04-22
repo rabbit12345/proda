@@ -136,10 +136,13 @@ class SessionKeeper:
 
                     # ── 2. keep-alive action (form reset preferred over fetch) ──
                     if self._keepalive_action:
-                        self._keepalive_action()
-                        log("Session keep-alive: form reset successful")
-                        self._on_ping_success()
-                        return
+                        try:
+                            self._keepalive_action()
+                            log("Session keep-alive: form reset successful")
+                            self._on_ping_success()
+                            return
+                        except Exception as e:
+                            log(f"Keep-alive action failed, falling back to fetch: {e}")
 
                     # ── 3. fallback fetch keepalive ping ──────────────────────
                     # Use execute_async_script + fetch instead of synchronous
