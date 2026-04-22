@@ -42,6 +42,7 @@ class InvalidPatientError(MbsCheckerError):
 
 
 _PATIENT_ERROR_PATTERNS = [
+    "the patients details could not be matched",
     "medicare card number entered is not valid",
     "individual reference number is not valid",
     "please check the details and try again",
@@ -386,6 +387,19 @@ class MbsChecker:
 
         if self._is_no_results_visible(self.driver):
             error_msg = "No results found — check patient details"
+
+        # Check for error div (HPOS displays patient matching errors in <div class="error">)
+        if not error_msg:
+            try:
+                error_divs = self.driver.find_elements(By.CLASS_NAME, "error")
+                if error_divs:
+                    for div in error_divs:
+                        error_text = div.text.strip()
+                        if error_text and div.is_displayed():
+                            error_msg = error_text[:200]
+                            break
+            except Exception:
+                pass
 
         # Check for field validation errors (e.g., highlighted input fields with error messages)
         if not error_msg:
