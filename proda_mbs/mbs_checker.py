@@ -7,7 +7,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import (
+    TimeoutException,
+    NoSuchElementException,
+    StaleElementReferenceException,
+)
 
 from .config import AppConfig
 from .page_state import PageSnapshot, PageStateDetector, PortalPageState
@@ -171,26 +175,33 @@ class MbsChecker:
         log(f"All {len(items)} MBS items selected")
 
     def _get_tab_ranges(self) -> List[Dict]:
-        tabs = []
-        tab_links = self.driver.find_elements(By.CSS_SELECTOR, _TAB_NAV_CSS)
+        for attempt in range(3):
+            tabs = []
+            tab_links = self.driver.find_elements(By.CSS_SELECTOR, _TAB_NAV_CSS)
 
-        if not tab_links:
-            tab_links = self.driver.find_elements(
-                By.XPATH,
-                "//a[contains(text(), '-') and string-length(text()) < 20]"
-            )
+            if not tab_links:
+                tab_links = self.driver.find_elements(
+                    By.XPATH,
+                    "//a[contains(text(), '-') and string-length(text()) < 20]"
+                )
 
-        for link in tab_links:
-            text = link.text.strip()
-            match = TAB_RANGE_PATTERN.match(text)
-            if match:
-                tabs.append({
-                    "element": link,
-                    "text": text,
-                    "low": int(match.group(1)),
-                    "high": int(match.group(2)),
-                })
-        return tabs
+            try:
+                for link in tab_links:
+                    text = link.text.strip()
+                    match = TAB_RANGE_PATTERN.match(text)
+                    if match:
+                        tabs.append({
+                            "element": link,
+                            "text": text,
+                            "low": int(match.group(1)),
+                            "high": int(match.group(2)),
+                        })
+                return tabs
+            except StaleElementReferenceException:
+                log(f"Tab list became stale while reading ranges, retrying ({attempt + 1}/3)")
+                wait_for_ajax(self.driver)
+
+        raise MbsCheckerError("Tab navigation became stale while reading item ranges")
 
     def _switch_to_tab(self, padded: str):
         item_num = int(padded)
@@ -216,6 +227,19 @@ class MbsChecker:
         log(f"Switching to tab: {target['text']}")
         try:
             target["element"].click()
+        except StaleElementReferenceException:
+            log("Target tab went stale before click, re-reading tab list")
+            refreshed_tabs = self._get_tab_ranges()
+            refreshed_target = next(
+                (tab for tab in refreshed_tabs if tab["text"] == target["text"]),
+                None,
+            )
+            if refreshed_target is None:
+                raise MbsCheckerError(f"Could not re-find tab {target['text']}")
+            try:
+                refreshed_target["element"].click()
+            except Exception:
+                self.driver.execute_script("arguments[0].click();", refreshed_target["element"])
         except Exception:
             self.driver.execute_script("arguments[0].click();", target["element"])
 
@@ -291,7 +315,7 @@ class MbsChecker:
                 self._current_tab_text = fresh_tabs[i]["text"]
                 log(f"Found and selected {padded_item} in tab {fresh_tabs[i]['text']}")
                 return True
-            except (NoSuchElementException, TimeoutException):
+            except (NoSuchElementException, TimeoutException, StaleElementReferenceException):
                 i += 1
                 continue
         return False
