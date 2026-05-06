@@ -6,6 +6,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
 from .config import AppConfig
+from .page_state import PageSnapshot, PageStateDetector, PortalPageState
 from .waits import wait_for_page_load, log
 
 
@@ -33,6 +34,7 @@ class HposNavigator:
         self.config = config
         self.wait_timeout = config.session.element_wait_timeout
         self.page_timeout = config.session.page_load_timeout
+        self.state_detector = PageStateDetector(driver)
 
     def _wait(self, condition, timeout=None):
         return WebDriverWait(
@@ -137,13 +139,8 @@ class HposNavigator:
 
         try:
             wait_for_page_load(self.driver, self.page_timeout * 2)
-            self._wait(
-                EC.presence_of_element_located(
-                    (By.ID, "guiForm:guiMedicareCardNumber")
-                ),
-                timeout=self.page_timeout * 2
-            )
-            log(f"Reached MBS Items Online Checker ({self.driver.current_url})")
+            snapshot = self.wait_for_mbs_ready(timeout=self.page_timeout * 2)
+            log(f"Reached MBS Items Online Checker ({snapshot.url})")
         except TimeoutException:
             log(f"MBS form not found. title='{self.driver.title}' "
                 f"url='{self.driver.current_url}'")
@@ -153,6 +150,34 @@ class HposNavigator:
     def navigate_to_mbs_checker_full(self):
         self.navigate_to_hpos()
         self.navigate_to_mbs_checker()
+
+    def get_page_snapshot(self) -> PageSnapshot:
+        return self.state_detector.snapshot()
+
+    def wait_for_mbs_ready(self, timeout: int | None = None) -> PageSnapshot:
+        timeout = timeout or self.page_timeout
+        return self._wait(
+            lambda d: self._mbs_snapshot_if_ready(),
+            timeout=timeout,
+        )
+
+    def _mbs_snapshot_if_ready(self) -> PageSnapshot | bool:
+        snapshot = self.get_page_snapshot()
+        if snapshot.state in {PortalPageState.MBS_FORM, PortalPageState.MBS_RESULTS}:
+            return snapshot
+        if snapshot.state in {
+            PortalPageState.LOGIN,
+            PortalPageState.OTP,
+            PortalPageState.SESSION_EXPIRED,
+            PortalPageState.LOGGED_OUT,
+            PortalPageState.OFFSITE,
+            PortalPageState.BROWSER_UNAVAILABLE,
+        }:
+            raise NavigationError(
+                "MBS navigation reached a terminal page state: "
+                f"{snapshot.state.value} title='{snapshot.title}' url='{snapshot.url}'"
+            )
+        return False
 
     def _dump_menu_links(self):
         try:

@@ -4,11 +4,13 @@ import re
 from typing import List, Dict, Optional
 
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 from .config import AppConfig
+from .page_state import PageSnapshot, PageStateDetector, PortalPageState
 from .waits import wait_for_ajax, wait_for_page_load, log
 
 
@@ -61,6 +63,7 @@ class MbsChecker:
         self.config = config
         self.wait_timeout = config.session.element_wait_timeout
         self._current_tab_text = None
+        self.state_detector = PageStateDetector(driver)
 
     def _wait(self, condition, timeout=None):
         return WebDriverWait(self.driver, timeout or self.wait_timeout).until(condition)
@@ -73,6 +76,13 @@ class MbsChecker:
         wait_for_page_load(self.driver, timeout)
         wait_for_ajax(self.driver, timeout)
 
+        snapshot = self.state_detector.snapshot()
+        if snapshot.state not in {PortalPageState.MBS_FORM, PortalPageState.MBS_RESULTS}:
+            raise MbsCheckerError(
+                f"MBS page not ready; state={snapshot.state.value} "
+                f"title='{snapshot.title}' url='{snapshot.url}'"
+            )
+
         for el_id in _FORM_IDS:
             self._wait(EC.element_to_be_clickable((By.ID, el_id)), timeout=timeout)
 
@@ -82,6 +92,9 @@ class MbsChecker:
         )
 
         log("Page fully loaded and ready")
+
+    def get_page_snapshot(self) -> PageSnapshot:
+        return self.state_detector.snapshot()
 
     def _set_field_value(self, element, value: str):
         """Set a form field value via JS and dispatch events so PrimeFaces
@@ -476,20 +489,76 @@ class MbsChecker:
         log(f"Extracted {len(results)} results")
         return results
 
-    def new_check(self):
-        log("Starting new check")
+    def reset_form_button(self):
+        """Click the form reset button to clear all fields."""
+        log("Attempting form reset via button")
         try:
             btn = self._wait(EC.element_to_be_clickable(
                 (By.ID, "guiForm:gui_searchAgain")
             ))
             btn.click()
-            wait_for_ajax(self.driver)
-            self._wait(EC.element_to_be_clickable(
-                (By.ID, "guiForm:guiMedicareCardNumber")
-            ))
-            log("Form reset for new check")
+            self.wait_until_form_ready()
+            log("Form reset button clicked successfully")
         except TimeoutException:
-            raise MbsCheckerError("Failed to reset form for new check")
+            raise MbsCheckerError("Failed to reset form via button")
+
+    def refresh_page_f5(self):
+        """Refresh the page using F5 keyboard shortcut."""
+        log("Refreshing page with F5")
+        try:
+            self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.F5)
+            self.wait_until_form_ready(timeout=self.config.session.page_load_timeout)
+            log("Page refreshed with F5, form ready")
+        except Exception as e:
+            raise MbsCheckerError(f"Failed to refresh page with F5: {e}")
+
+    def wait_until_form_ready(self, timeout: int | None = None) -> PageSnapshot:
+        timeout = timeout or self.config.session.page_load_timeout
+        self._wait_for_page_ready(timeout=timeout)
+        snapshot = self.get_page_snapshot()
+        if snapshot.state not in {PortalPageState.MBS_FORM, PortalPageState.MBS_RESULTS}:
+            raise MbsCheckerError(
+                f"MBS page did not become ready; state={snapshot.state.value}"
+            )
+        return snapshot
+
+    def recover_mbs_page(self, snapshot: PageSnapshot | None = None) -> PageSnapshot:
+        snapshot = snapshot or self.get_page_snapshot()
+        log(f"Recovering MBS page from state={snapshot.state.value}")
+
+        if snapshot.state not in {
+            PortalPageState.MBS_FORM,
+            PortalPageState.MBS_RESULTS,
+            PortalPageState.UNKNOWN,
+        }:
+            raise MbsCheckerError(
+                f"Cannot recover MBS page from state={snapshot.state.value}"
+            )
+
+        if snapshot.has_reset_button:
+            try:
+                self.reset_form_button()
+                return self.get_page_snapshot()
+            except MbsCheckerError as exc:
+                log(f"Reset button recovery failed, falling back to refresh: {exc}")
+
+        self.refresh_page_f5()
+        refreshed = self.get_page_snapshot()
+        if refreshed.state not in {PortalPageState.MBS_FORM, PortalPageState.MBS_RESULTS}:
+            raise MbsCheckerError(
+                f"Page refresh did not restore MBS form; state={refreshed.state.value}"
+            )
+        return refreshed
+
+    def new_check(self):
+        """Reset the form for a fresh check with bounded recovery."""
+        snapshot = self.get_page_snapshot()
+        if snapshot.state in {PortalPageState.MBS_FORM, PortalPageState.MBS_RESULTS}:
+            self.recover_mbs_page(snapshot)
+            return
+        raise MbsCheckerError(
+            f"Cannot start new check from state={snapshot.state.value}"
+        )
 
     def check_patient(
         self,

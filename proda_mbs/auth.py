@@ -9,6 +9,7 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 from .config import AppConfig
 from .gmail_otp import GmailOtpExtractor, GmailAuthError
+from .page_state import PageStateDetector, PortalPageState
 from .waits import wait_for_ajax, wait_for_page_load, log
 
 
@@ -40,6 +41,7 @@ class ProdaAuthenticator:
         self.wait_timeout = config.session.element_wait_timeout
         self.page_timeout = config.session.page_load_timeout
         self.gmail_extractor = None
+        self.state_detector = PageStateDetector(driver)
 
     def _wait(self, condition, timeout=None):
         return WebDriverWait(self.driver, timeout or self.wait_timeout).until(condition)
@@ -109,7 +111,19 @@ class ProdaAuthenticator:
                 self._request_otp_via_email()
 
             if self._otp_loop(max_otp_attempts):
-                log("Login complete - reached My Services page")
+                snapshot = self.state_detector.snapshot()
+                if snapshot.state not in {
+                    PortalPageState.MY_SERVICES,
+                    PortalPageState.HPOS_LANDING,
+                    PortalPageState.MBS_FORM,
+                    PortalPageState.MBS_RESULTS,
+                }:
+                    raise LoginError(
+                        "Login completed but browser did not land on an "
+                        f"authenticated page: state={snapshot.state.value} "
+                        f"url='{snapshot.url}'"
+                    )
+                log("Login complete - reached authenticated portal")
                 return
 
             if login_try < max_login_retries:

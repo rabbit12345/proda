@@ -5,50 +5,34 @@ import ctypes
 import sys
 import threading
 
-from .config import load_config, create_driver, ConfigError
-from .auth import ProdaAuthenticator, LoginError
+from .auth import LoginError, ProdaAuthenticator
+from .config import ConfigError, create_driver, load_config
+from .mbs_checker import InvalidPatientError, MbsChecker, MbsCheckerError, format_results
 from .navigator import HposNavigator, NavigationError
-from .mbs_checker import MbsChecker, MbsCheckerError, InvalidPatientError, format_results
+from .page_state import PageStateDetector, PortalPageState
 from .session_keeper import SessionKeeper
 from .waits import log
 
 _MAX_RECOVERY_ATTEMPTS = 3
-_HPOS_HOST = "www2.medicareaustralia.gov.au"
 
 
 def _prime_clipboard():
-    """Force delayed clipboard rendering held by the browser.
-
-    After Selenium automation Chrome/Firefox becomes the clipboard owner
-    with delayed rendering.  The first Ctrl+V in the console sends
-    WM_RENDERFORMAT to Chrome, but Chrome isn't processing Windows messages
-    yet so the request silently fails.  Calling GetClipboardData here forces
-    Chrome to materialise the data now, while we still have the driver
-    connection active, so all subsequent pastes work immediately.
-    """
     try:
         u32 = ctypes.windll.user32
-        CF_UNICODETEXT = 13
-        if not u32.IsClipboardFormatAvailable(CF_UNICODETEXT):
+        cf_unicode_text = 13
+        if not u32.IsClipboardFormatAvailable(cf_unicode_text):
             return
         if not u32.OpenClipboard(None):
             return
         try:
-            u32.GetClipboardData(CF_UNICODETEXT)  # triggers WM_RENDERFORMAT
+            u32.GetClipboardData(cf_unicode_text)
         finally:
             u32.CloseClipboard()
     except Exception:
         pass
 
 
-
 def _refocus_console():
-    """Bring the console window to the foreground after browser automation.
-
-    SetForegroundWindow is silently ignored by Windows when the calling
-    process is not the current foreground owner.  Temporarily attaching
-    our thread input to the foreground thread bypasses that restriction.
-    """
     try:
         hwnd = ctypes.windll.kernel32.GetConsoleWindow()
         if not hwnd:
@@ -64,7 +48,7 @@ def _refocus_console():
             attached = True
         try:
             u32.BringWindowToTop(hwnd)
-            u32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            u32.ShowWindow(hwnd, 9)
             u32.SetForegroundWindow(hwnd)
         finally:
             if attached:
@@ -74,54 +58,35 @@ def _refocus_console():
 
 
 def _quit_driver_with_timeout(driver, timeout: int = 8):
-    t = threading.Thread(target=driver.quit, daemon=True)
-    t.start()
-    t.join(timeout=timeout)
-    if t.is_alive():
-        log("Browser did not close within timeout — continuing anyway")
+    thread = threading.Thread(target=driver.quit, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    if thread.is_alive():
+        log("Browser did not close within timeout - continuing anyway")
 
 
 def _prime_clipboard_async():
-    """Run clipboard priming in background thread with timeout."""
-    def _do_prime():
-        try:
-            _prime_clipboard()
-        except Exception:
-            pass
-    t = threading.Thread(target=_do_prime, daemon=True)
-    t.start()
+    thread = threading.Thread(target=_prime_clipboard, daemon=True)
+    thread.start()
 
 
 def _refocus_console_async():
-    """Run console refocus in background thread with timeout."""
-    def _do_refocus():
-        try:
-            _refocus_console()
-        except Exception:
-            pass
-    t = threading.Thread(target=_do_refocus, daemon=True)
-    t.start()
+    thread = threading.Thread(target=_refocus_console, daemon=True)
+    thread.start()
 
 
-def _still_on_hpos(driver) -> bool:
-    """Return True if the browser is still on an HPOS page."""
-    try:
-        return _HPOS_HOST in driver.current_url
-    except Exception:
-        return True  # assume OK if we can't read the URL
+def _state_requires_relogin(state: PortalPageState) -> bool:
+    return state in {
+        PortalPageState.BROWSER_UNAVAILABLE,
+        PortalPageState.LOGIN,
+        PortalPageState.OTP,
+        PortalPageState.SESSION_EXPIRED,
+        PortalPageState.LOGGED_OUT,
+        PortalPageState.OFFSITE,
+    }
 
 
 def prompt_patient_details() -> tuple[str, str, str] | None:
-    """Prompt the user for patient details interactively.
-
-    Navigation:
-      'q'   — quit
-      'b'   — go back to previous field
-      'r'   — restart entry (discard current values)
-    Validation:
-      Medicare must be exactly 10 digits.
-      IRN must be exactly 1 digit.
-    """
     fields = [
         ("Medicare card number (10 digits)", "medicare"),
         ("Individual reference number (1 digit)", "irn"),
@@ -150,7 +115,6 @@ def prompt_patient_details() -> tuple[str, str, str] | None:
                 print("  (already at first field)")
             continue
 
-        # Validate numeric fields
         field_key = fields[idx][1]
         if field_key == "medicare":
             if not raw.isdigit() or len(raw) != 10:
@@ -160,10 +124,9 @@ def prompt_patient_details() -> tuple[str, str, str] | None:
             if not raw.isdigit() or len(raw) != 1:
                 print("  Invalid: must be a single digit")
                 continue
-        elif field_key == "name":
-            if not raw:
-                print("  Invalid: name cannot be empty")
-                continue
+        elif field_key == "name" and not raw:
+            print("  Invalid: name cannot be empty")
+            continue
 
         values[idx] = raw
         idx += 1
@@ -177,12 +140,7 @@ def _recover_session(
     old_session_keeper: SessionKeeper,
     driver_lock: threading.Lock,
     after_ping=None,
-) -> tuple[SessionKeeper, MbsChecker, HposNavigator]:
-    """Re-login and navigate back to MBS checker after session loss.
-
-    Returns a new (session_keeper, checker, navigator) triple.
-    Raises LoginError or NavigationError on failure.
-    """
+) -> tuple[SessionKeeper, MbsChecker, HposNavigator, PageStateDetector]:
     log("Attempting session recovery (re-login)...")
     old_session_keeper.stop()
 
@@ -192,42 +150,119 @@ def _recover_session(
 
         navigator = HposNavigator(driver, config)
         navigator.navigate_to_mbs_checker_full()
+        checker = MbsChecker(driver, config)
+        detector = PageStateDetector(driver)
+        checker.wait_until_form_ready()
 
-    new_sk = SessionKeeper(driver, config.session.keepalive_interval_seconds,
-                           driver_lock=driver_lock,
-                           after_ping=after_ping)
-    new_sk.start()
+    new_session_keeper = SessionKeeper(
+        driver,
+        config.session.keepalive_interval_seconds,
+        driver_lock=driver_lock,
+        after_ping=after_ping,
+    )
+    new_session_keeper.set_keepalive_action(checker.new_check)
+    new_session_keeper.start()
 
-    checker = MbsChecker(driver, config)
-    new_sk.set_keepalive_action(checker.new_check)
     log("Session recovery successful")
-    return new_sk, checker, navigator
+    return new_session_keeper, checker, navigator, detector
+
+
+def _ensure_mbs_context(
+    navigator: HposNavigator,
+    checker: MbsChecker,
+    session_keeper: SessionKeeper,
+    detector: PageStateDetector,
+    *,
+    require_fresh_form: bool,
+):
+    snapshot = detector.snapshot()
+    log(f"Checking portal state before action: {snapshot.state.value}")
+
+    if _state_requires_relogin(snapshot.state):
+        session_keeper.mark_session_lost()
+        raise MbsCheckerError(
+            f"Session is not recoverable in-place: state={snapshot.state.value}"
+        )
+
+    if snapshot.state in {PortalPageState.MY_SERVICES, PortalPageState.HPOS_LANDING}:
+        try:
+            navigator.navigate_to_mbs_checker()
+        except NavigationError:
+            snapshot = detector.snapshot()
+            if _state_requires_relogin(snapshot.state):
+                session_keeper.mark_session_lost()
+            raise
+        snapshot = detector.snapshot()
+
+    if snapshot.state == PortalPageState.UNKNOWN:
+        try:
+            snapshot = checker.recover_mbs_page(snapshot)
+        except MbsCheckerError:
+            session_keeper.mark_session_lost()
+            raise
+
+    if snapshot.state not in {PortalPageState.MBS_FORM, PortalPageState.MBS_RESULTS}:
+        if snapshot.state == PortalPageState.UNKNOWN:
+            session_keeper.mark_session_lost()
+        raise MbsCheckerError(
+            f"Unexpected portal state after navigation: {snapshot.state.value}"
+        )
+
+    if require_fresh_form:
+        try:
+            snapshot = checker.recover_mbs_page(snapshot)
+        except MbsCheckerError:
+            session_keeper.mark_session_lost()
+            raise
+    else:
+        snapshot = checker.wait_until_form_ready()
+
+    if _state_requires_relogin(snapshot.state):
+        session_keeper.mark_session_lost()
+        raise MbsCheckerError(
+            f"Session expired while preparing the MBS page: {snapshot.state.value}"
+        )
+
+    if snapshot.state not in {PortalPageState.MBS_FORM, PortalPageState.MBS_RESULTS}:
+        raise MbsCheckerError(f"MBS page is not ready: {snapshot.state.value}")
 
 
 def run_single_check(
     checker: MbsChecker,
     session_keeper: SessionKeeper,
+    detector: PageStateDetector,
     medicare: str,
     irn: str,
     first_name: str,
     items: list[str] | None = None,
     driver_lock: threading.Lock | None = None,
 ):
-    """Run a single patient check and display results.
-
-    Raises InvalidPatientError so the caller can reset to patient entry.
-    """
     try:
         lock = driver_lock or threading.Lock()
         with lock:
+            pre_check_snapshot = detector.snapshot()
+            if pre_check_snapshot.state not in {
+                PortalPageState.MBS_FORM,
+                PortalPageState.MBS_RESULTS,
+            }:
+                raise MbsCheckerError(
+                    f"Cannot run check from page state {pre_check_snapshot.state.value}"
+                )
             results = checker.check_patient(medicare, irn, first_name, items)
+            post_check_snapshot = detector.snapshot()
+            if _state_requires_relogin(post_check_snapshot.state):
+                session_keeper.mark_session_lost()
+                raise MbsCheckerError(
+                    f"Session expired during patient check: {post_check_snapshot.state.value}"
+                )
+
         session_keeper.reset()
         print(format_results(medicare, first_name, results))
         return results
     except InvalidPatientError:
         raise
-    except MbsCheckerError as e:
-        log(f"MBS check failed: {e}")
+    except MbsCheckerError as exc:
+        log(f"MBS check failed: {exc}")
         return None
 
 
@@ -235,9 +270,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="PRODA MBS Items Online Checker Automation"
     )
-    parser.add_argument(
-        "--config", type=str, default=None, help="Path to config.yaml"
-    )
+    parser.add_argument("--config", type=str, default=None, help="Path to config.yaml")
     parser.add_argument(
         "--browser",
         type=str,
@@ -245,15 +278,9 @@ def main():
         default=None,
         help="Browser to use (overrides config)",
     )
-    parser.add_argument(
-        "--medicare", type=str, default=None, help="Medicare card number"
-    )
-    parser.add_argument(
-        "--irn", type=str, default=None, help="Individual reference number"
-    )
-    parser.add_argument(
-        "--name", type=str, default=None, help="Patient first name"
-    )
+    parser.add_argument("--medicare", type=str, default=None, help="Medicare card number")
+    parser.add_argument("--irn", type=str, default=None, help="Individual reference number")
+    parser.add_argument("--name", type=str, default=None, help="Patient first name")
     parser.add_argument(
         "--items",
         type=str,
@@ -261,19 +288,13 @@ def main():
         default=None,
         help="MBS item numbers to check (overrides config)",
     )
-    parser.add_argument(
-        "--headless",
-        action="store_true",
-        help="Run browser in headless mode",
-    )
-
+    parser.add_argument("--headless", action="store_true", help="Run browser in headless mode")
     args = parser.parse_args()
 
-    # Load config
     try:
         config = load_config(args.config)
-    except ConfigError as e:
-        log(f"Configuration error: {e}")
+    except ConfigError as exc:
+        log(f"Configuration error: {exc}")
         sys.exit(1)
 
     if args.browser:
@@ -281,124 +302,124 @@ def main():
     if args.headless:
         config.browser.headless = True
 
-    # Create browser driver
     log(f"Starting {config.browser.type} browser...")
     driver = create_driver(config.browser)
-
-    # Shared lock so the keepalive timer thread and main thread
-    # never issue concurrent Selenium commands.
     driver_lock = threading.Lock()
-
     session_keeper = None
+
     try:
-        # Login
         log("Starting PRODA login...")
         auth = ProdaAuthenticator(driver, config)
         auth.login()
 
-        # Navigate to MBS checker
         log("Navigating to MBS Items Online Checker...")
         navigator = HposNavigator(driver, config)
         navigator.navigate_to_mbs_checker_full()
+        checker = MbsChecker(driver, config)
+        state_detector = PageStateDetector(driver)
+        with driver_lock:
+            checker.wait_until_form_ready()
 
-        # Start session keep-alive
         def _after_ping():
             _prime_clipboard_async()
             _refocus_console_async()
 
         session_keeper = SessionKeeper(
-            driver, config.session.keepalive_interval_seconds,
+            driver,
+            config.session.keepalive_interval_seconds,
             driver_lock=driver_lock,
             after_ping=_after_ping,
         )
+        session_keeper.set_keepalive_action(checker.new_check)
         session_keeper.start()
 
-        # Create checker
-        checker = MbsChecker(driver, config)
-        session_keeper.set_keepalive_action(checker.new_check)
-
-        # Single check mode
         if args.medicare and args.irn and args.name:
+            with driver_lock:
+                _ensure_mbs_context(
+                    navigator,
+                    checker,
+                    session_keeper,
+                    state_detector,
+                    require_fresh_form=False,
+                )
             run_single_check(
-                checker, session_keeper,
-                args.medicare, args.irn, args.name, args.items,
+                checker,
+                session_keeper,
+                state_detector,
+                args.medicare,
+                args.irn,
+                args.name,
+                args.items,
                 driver_lock=driver_lock,
             )
             print("\nCheck complete. Enter another patient or 'q' to quit.")
-
         else:
             print("\nReady for patient checks.")
 
-        # Interactive loop — keeps running until user quits
         first_check = not (args.medicare and args.irn and args.name)
         skip_form_reset = False
         recovery_attempts = 0
-        patient = None
 
         while True:
-            # Recover if session was invalidated by another login
             if not session_keeper.is_session_valid:
                 recovery_attempts += 1
                 if recovery_attempts > _MAX_RECOVERY_ATTEMPTS:
-                    log(f"Session recovery failed {_MAX_RECOVERY_ATTEMPTS} "
-                        "times, giving up")
+                    log(f"Session recovery failed {_MAX_RECOVERY_ATTEMPTS} times, giving up")
                     break
-                log(f"Session invalid, recovering "
-                    f"(attempt {recovery_attempts}/{_MAX_RECOVERY_ATTEMPTS})...")
+                log(
+                    f"Session invalid, recovering "
+                    f"(attempt {recovery_attempts}/{_MAX_RECOVERY_ATTEMPTS})..."
+                )
                 try:
-                    session_keeper, checker, navigator = _recover_session(
-                        driver, config, session_keeper, driver_lock,
-                        after_ping=_after_ping,
+                    session_keeper, checker, navigator, state_detector = _recover_session(
+                        driver, config, session_keeper, driver_lock, after_ping=_after_ping
                     )
                     first_check = True
                     recovery_attempts = 0
-                except (LoginError, NavigationError) as e:
-                    log(f"Session recovery failed: {e}")
+                except (LoginError, NavigationError, MbsCheckerError) as exc:
+                    log(f"Session recovery failed: {exc}")
                     continue
 
             patient = prompt_patient_details()
             if patient is None:
                 break
 
-            # Session may have died while waiting for user input
             if not session_keeper.is_session_valid:
                 log("Session lost while waiting for input, will recover")
                 continue
 
-            if not first_check and not skip_form_reset:
-                try:
-                    with driver_lock:
-                        checker.new_check()
-                except MbsCheckerError:
-                    log("Could not reset form, attempting page reload")
-                    try:
-                        with driver_lock:
-                            navigator.navigate_to_mbs_checker()
-                    except NavigationError:
-                        if not session_keeper.is_session_valid:
-                            log("Session lost during recovery, will re-login next iteration")
-                            continue
-                        with driver_lock:
-                            if not _still_on_hpos(driver):
-                                log("Navigation failed and browser left HPOS — marking session lost")
-                                session_keeper.mark_session_lost()
-                                continue
-                        log("Navigation failed after form reset error")
-                        continue
+            try:
+                with driver_lock:
+                    _ensure_mbs_context(
+                        navigator,
+                        checker,
+                        session_keeper,
+                        state_detector,
+                        require_fresh_form=(
+                            session_keeper.needs_refresh
+                            or (not first_check and not skip_form_reset)
+                        ),
+                    )
+            except (MbsCheckerError, NavigationError) as exc:
+                log(f"Could not prepare MBS page: {exc}")
+                continue
 
             skip_form_reset = False
             try:
                 result = run_single_check(
-                    checker, session_keeper,
-                    patient[0], patient[1], patient[2], args.items,
+                    checker,
+                    session_keeper,
+                    state_detector,
+                    patient[0],
+                    patient[1],
+                    patient[2],
+                    args.items,
                     driver_lock=driver_lock,
                 )
-            except InvalidPatientError as e:
-                print(f"\n  ** {e}")
-                print("  Patient fields cleared — item selection preserved.")
+            except InvalidPatientError as exc:
+                print(f"\n  ** {exc}")
+                print("  Patient fields cleared - item selection preserved.")
                 print("  Please re-enter patient details.\n")
-                # InvalidPatientError already cleared patient fields via JS.
-                # Skip form reset — no need to click button or wait for form.
                 skip_form_reset = True
                 _prime_clipboard_async()
                 _refocus_console_async()
@@ -407,21 +428,25 @@ def main():
             _prime_clipboard_async()
             _refocus_console_async()
 
-            if result is None and session_keeper.is_session_valid:
-                # Check whether the failure was due to the session expiring
-                # (browser navigated away from HPOS) rather than a transient error.
-                with driver_lock:
-                    if not _still_on_hpos(driver):
-                        log("Check failed and browser left HPOS — marking session lost")
-                        session_keeper.mark_session_lost()
+            with driver_lock:
+                post_check_snapshot = state_detector.snapshot()
+                if _state_requires_relogin(post_check_snapshot.state):
+                    log(
+                        "Patient check ended on relogin-required page state: "
+                        f"{post_check_snapshot.state.value}"
+                    )
+                    session_keeper.mark_session_lost()
+                elif result is None and post_check_snapshot.state == PortalPageState.UNKNOWN:
+                    log("Patient check left browser in unknown state - marking session lost")
+                    session_keeper.mark_session_lost()
 
             first_check = False
 
-    except LoginError as e:
-        log(f"Login failed: {e}")
+    except LoginError as exc:
+        log(f"Login failed: {exc}")
         sys.exit(1)
-    except NavigationError as e:
-        log(f"Navigation failed: {e}")
+    except NavigationError as exc:
+        log(f"Navigation failed: {exc}")
         sys.exit(1)
     except KeyboardInterrupt:
         log("Interrupted by user")
