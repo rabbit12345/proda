@@ -52,6 +52,36 @@ class ProdaAuthenticator:
         except Exception:
             return "could not read page state"
 
+    def _wait_for_login_page(self, timeout: int):
+        def _login_snapshot_or_terminal(_driver):
+            snapshot = self.state_detector.snapshot()
+            if snapshot.state == PortalPageState.LOGIN:
+                return snapshot
+            if snapshot.state in {
+                PortalPageState.OTP,
+                PortalPageState.MY_SERVICES,
+                PortalPageState.HPOS_LANDING,
+                PortalPageState.MBS_FORM,
+                PortalPageState.MBS_RESULTS,
+            }:
+                raise LoginError(
+                    "Browser landed on unexpected page while opening login: "
+                    f"state={snapshot.state.value} url='{snapshot.url}'"
+                )
+            if snapshot.state in {
+                PortalPageState.SESSION_EXPIRED,
+                PortalPageState.LOGGED_OUT,
+                PortalPageState.OFFSITE,
+                PortalPageState.BROWSER_UNAVAILABLE,
+            }:
+                raise LoginError(
+                    "PRODA did not present the login form after navigation: "
+                    f"state={snapshot.state.value} url='{snapshot.url}'"
+                )
+            return False
+
+        return self._wait(_login_snapshot_or_terminal, timeout=timeout)
+
     def _find_error_on_page(self) -> str | None:
         """Scan the current page for visible error messages."""
         try:
@@ -165,14 +195,12 @@ class ProdaAuthenticator:
         log("Navigating to PRODA login page")
         self.driver.get(self.config.proda.url)
         try:
-            wait_for_page_load(self.driver, self.page_timeout)
-            self._wait(
-                EC.presence_of_element_located(
-                    (By.ID, "loginFormAndStuff:username")
-                ),
-                timeout=self.page_timeout
-            )
+            wait_for_page_load(self.driver, min(self.page_timeout, 5))
+            snapshot = self._wait_for_login_page(timeout=self.page_timeout)
             log(f"Login page loaded ({self._diag()})")
+            return snapshot
+        except LoginError:
+            raise
         except TimeoutException:
             raise LoginError(f"PRODA login page did not load. {self._diag()}")
 

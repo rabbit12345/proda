@@ -87,6 +87,42 @@ def _state_requires_relogin(state: PortalPageState) -> bool:
 
 
 def prompt_patient_details() -> tuple[str, str, str] | None:
+    print("\n--- Enter patient details ---")
+    print("  Fast entry: medicare irn first-name")
+    print("  Example: 1234567890 1 John")
+    print("  Commands: 'q' quit, 'r' restart, 'b' step-by-step mode")
+
+    while True:
+        raw = input("  Patient: ").strip()
+
+        if raw.lower() == "q":
+            return None
+        if raw.lower() == "r":
+            print("  (restarted)")
+            continue
+        if raw.lower() == "b":
+            return _prompt_patient_details_step_by_step()
+
+        parts = raw.replace(",", " ").split(maxsplit=2)
+        if len(parts) != 3:
+            print("  Invalid: enter medicare, irn, and first name on one line")
+            continue
+
+        medicare, irn, name = parts[0], parts[1], parts[2].strip()
+        if not medicare.isdigit() or len(medicare) != 10:
+            print("  Invalid: Medicare must be exactly 10 digits")
+            continue
+        if not irn.isdigit() or len(irn) != 1:
+            print("  Invalid: IRN must be a single digit")
+            continue
+        if not name:
+            print("  Invalid: name cannot be empty")
+            continue
+
+        return medicare, irn, name
+
+
+def _prompt_patient_details_step_by_step() -> tuple[str, str, str] | None:
     fields = [
         ("Medicare card number (10 digits)", "medicare"),
         ("Individual reference number (1 digit)", "irn"),
@@ -95,7 +131,7 @@ def prompt_patient_details() -> tuple[str, str, str] | None:
     values: list[str] = [""] * len(fields)
     idx = 0
 
-    print("\n--- Enter patient details ('q' quit, 'b' back, 'r' restart) ---")
+    print("  Step-by-step mode ('q' quit, 'b' back, 'r' restart)")
     while idx < len(fields):
         prompt_label = fields[idx][0]
         raw = input(f"  {prompt_label}: ").strip()
@@ -160,7 +196,6 @@ def _recover_session(
         driver_lock=driver_lock,
         after_ping=after_ping,
     )
-    new_session_keeper.set_keepalive_action(checker.new_check)
     new_session_keeper.start()
 
     log("Session recovery successful")
@@ -195,11 +230,11 @@ def _ensure_mbs_context(
         snapshot = detector.snapshot()
 
     if snapshot.state == PortalPageState.UNKNOWN:
-        try:
-            snapshot = checker.recover_mbs_page(snapshot)
-        except MbsCheckerError:
-            session_keeper.mark_session_lost()
-            raise
+        session_keeper.mark_session_lost()
+        raise MbsCheckerError(
+            "Portal state is unknown and unsafe for in-place recovery: "
+            f"title='{snapshot.title}' url='{snapshot.url}'"
+        )
 
     if snapshot.state not in {PortalPageState.MBS_FORM, PortalPageState.MBS_RESULTS}:
         if snapshot.state == PortalPageState.UNKNOWN:
@@ -330,7 +365,6 @@ def main():
             driver_lock=driver_lock,
             after_ping=_after_ping,
         )
-        session_keeper.set_keepalive_action(checker.new_check)
         session_keeper.start()
 
         if args.medicare and args.irn and args.name:
@@ -359,8 +393,20 @@ def main():
         first_check = not (args.medicare and args.irn and args.name)
         skip_form_reset = False
         recovery_attempts = 0
+        pending_patient: tuple[str, str, str] | None = None
 
         while True:
+            # Collect patient details first so a relogin (if needed) can run
+            # the search automatically without re-entering them.
+            if pending_patient is not None:
+                patient = pending_patient
+                pending_patient = None
+                log(f"Retrying stored patient after recovery: {patient[2]}")
+            else:
+                patient = prompt_patient_details()
+                if patient is None:
+                    break
+
             if not session_keeper.is_session_valid:
                 recovery_attempts += 1
                 if recovery_attempts > _MAX_RECOVERY_ATTEMPTS:
@@ -378,15 +424,8 @@ def main():
                     recovery_attempts = 0
                 except (LoginError, NavigationError, MbsCheckerError) as exc:
                     log(f"Session recovery failed: {exc}")
+                    pending_patient = patient
                     continue
-
-            patient = prompt_patient_details()
-            if patient is None:
-                break
-
-            if not session_keeper.is_session_valid:
-                log("Session lost while waiting for input, will recover")
-                continue
 
             try:
                 with driver_lock:
@@ -402,6 +441,8 @@ def main():
                     )
             except (MbsCheckerError, NavigationError) as exc:
                 log(f"Could not prepare MBS page: {exc}")
+                if not session_keeper.is_session_valid:
+                    pending_patient = patient
                 continue
 
             skip_form_reset = False
@@ -439,6 +480,11 @@ def main():
                 elif result is None and post_check_snapshot.state == PortalPageState.UNKNOWN:
                     log("Patient check left browser in unknown state - marking session lost")
                     session_keeper.mark_session_lost()
+
+            if result is None and not session_keeper.is_session_valid:
+                # The check never produced results because the session died;
+                # rerun this patient automatically after relogin.
+                pending_patient = patient
 
             first_check = False
 

@@ -42,19 +42,31 @@ class HposNavigator:
         ).until(condition)
 
     def _switch_to_new_window(self, original_handles, target_title_fragment: str = ""):
-        """Switch to a newly opened window/tab if one appears.
-
-        To avoid a long wait when the link navigates the *current* tab
-        instead of opening a new one, we also check whether the current
-        window's title already contains ``target_title_fragment``.
-        """
-        deadline = 10  # max seconds to wait for a new handle
+        """Switch to a newly opened or reused HPOS window if one appears."""
+        deadline = 10  # max seconds to wait for a usable HPOS window
         try:
+            original_handle = self.driver.current_window_handle
+
+            def _scan_existing_handles():
+                current_handles = list(self.driver.window_handles)
+                target_title_lower = target_title_fragment.lower()
+                for handle in current_handles:
+                    self.driver.switch_to.window(handle)
+                    title_lower = (self.driver.title or "").lower()
+                    url_lower = (self.driver.current_url or "").lower()
+                    if (
+                        target_title_lower and target_title_lower in title_lower
+                    ) or "health professional online services" in title_lower or "/hpos/" in url_lower:
+                        return handle
+                self.driver.switch_to.window(original_handle)
+                return ""
+
             def _new_handle_or_current_nav(d):
-                # A new tab appeared — switch to it
                 if len(d.window_handles) > len(original_handles):
                     return "new_window"
-                # No new tab, but the current page already navigated
+                existing_handle = _scan_existing_handles()
+                if existing_handle:
+                    return existing_handle
                 if target_title_fragment and target_title_fragment.lower() in d.title.lower():
                     return "same_window"
                 return False
@@ -69,6 +81,10 @@ class HposNavigator:
                     self.driver.switch_to.window(new_handles.pop())
                     log(f"Switched to new window: title='{self.driver.title}'")
                     return True
+            elif result not in {"same_window", "new_window"}:
+                self.driver.switch_to.window(result)
+                log(f"Attached to existing window: title='{self.driver.title}'")
+                return True
             else:
                 log("HPOS loaded in current tab (no new window)")
                 return True
@@ -113,19 +129,12 @@ class HposNavigator:
                 EC.title_contains(hpos_title),
                 timeout=self.page_timeout
             )
-            # Best-effort page-load wait.  On HPOS the government
-            # portal often has slow background resources (tracking
-            # pixels, certificate negotiation) that keep readyState at
-            # "loading" long after the page is usable.  execute_script
-            # can block at the transport level with no way for
-            # WebDriverWait's timeout to interrupt it, causing an
-            # indefinite hang that only Ctrl-C can break.  A short,
-            # non-fatal wait is sufficient — the title check above
-            # already confirms we are on the right page.
+            # Best-effort page-load wait. On HPOS the portal often keeps
+            # background resources alive after the page is already usable.
             try:
                 wait_for_page_load(self.driver, timeout=5)
             except Exception as e:
-                log(f"Page readyState wait skipped ({e}) — title confirmed, continuing")
+                log(f"Page readyState wait skipped ({e}); title confirmed, continuing")
             log(f"Reached HPOS landing page ({self.driver.current_url})")
         except TimeoutException:
             raise NavigationError(
@@ -172,6 +181,7 @@ class HposNavigator:
             PortalPageState.LOGGED_OUT,
             PortalPageState.OFFSITE,
             PortalPageState.BROWSER_UNAVAILABLE,
+            PortalPageState.UNKNOWN,
         }:
             raise NavigationError(
                 "MBS navigation reached a terminal page state: "

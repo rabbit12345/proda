@@ -11,7 +11,7 @@ def log(msg: str):
     print(f"{time.strftime('%d/%m/%y %H:%M:%S')} {msg}")
 
 
-def wait_for_ajax(driver, timeout: int = 15):
+def wait_for_ajax(driver, timeout: int = 15, settle_delay: float = 0.25):
     """Bounded settle wait without JavaScript execution.
 
     PrimeFaces updates frequently replace parts of the DOM. A short body-presence
@@ -22,7 +22,8 @@ def wait_for_ajax(driver, timeout: int = 15):
         WebDriverWait(driver, min(timeout, 5)).until(
             lambda d: len(d.find_elements(By.TAG_NAME, "body")) > 0
         )
-        time.sleep(0.25)
+        if settle_delay > 0:
+            time.sleep(settle_delay)
     except (TimeoutException, WebDriverException):
         log("Warning: AJAX settle wait did not complete cleanly")
 

@@ -66,11 +66,93 @@ class MbsChecker:
         self.driver = driver
         self.config = config
         self.wait_timeout = config.session.element_wait_timeout
+        self.ajax_stability_delay = config.session.ajax_stability_delay
         self._current_tab_text = None
+        self._tab_ranges_cache: List[Dict] | None = None
         self.state_detector = PageStateDetector(driver)
 
-    def _wait(self, condition, timeout=None):
-        return WebDriverWait(self.driver, timeout or self.wait_timeout).until(condition)
+    def _wait(self, condition, timeout=None, poll_frequency=0.5):
+        return WebDriverWait(
+            self.driver, timeout or self.wait_timeout, poll_frequency=poll_frequency
+        ).until(condition)
+
+    def _describe_snapshot(self, snapshot: PageSnapshot) -> str:
+        details = [f"state={snapshot.state.value}"]
+        if snapshot.title:
+            details.append(f"title='{snapshot.title}'")
+        if snapshot.url:
+            details.append(f"url='{snapshot.url}'")
+        if snapshot.ready_state:
+            details.append(f"readyState='{snapshot.ready_state}'")
+        if snapshot.body_excerpt:
+            details.append(f"body='{snapshot.body_excerpt[:160]}'")
+        return " ".join(details)
+
+    def _raise_for_terminal_state(
+        self,
+        snapshot: PageSnapshot,
+        *,
+        action: str,
+        allow_mbs_states: bool,
+    ):
+        terminal_states = {
+            PortalPageState.LOGIN,
+            PortalPageState.OTP,
+            PortalPageState.SESSION_EXPIRED,
+            PortalPageState.LOGGED_OUT,
+            PortalPageState.OFFSITE,
+            PortalPageState.BROWSER_UNAVAILABLE,
+            PortalPageState.UNKNOWN,
+        }
+        if snapshot.state in terminal_states:
+            raise MbsCheckerError(
+                f"{action} interrupted by portal state change: "
+                f"{self._describe_snapshot(snapshot)}"
+            )
+        if snapshot.state not in {
+            PortalPageState.MBS_FORM,
+            PortalPageState.MBS_RESULTS,
+        }:
+            raise MbsCheckerError(
+                f"{action} left the MBS workflow: {self._describe_snapshot(snapshot)}"
+            )
+
+    def _wait_for_expected_or_terminal(
+        self,
+        condition,
+        *,
+        action: str,
+        timeout: int,
+        allow_mbs_states: bool,
+        poll_frequency: float = 0.5,
+    ):
+        def _guarded(driver):
+            # Check the expected outcome first; the state snapshot is only
+            # needed when the outcome has not appeared yet.
+            result = condition(driver)
+            if result:
+                return result
+            snapshot = self.state_detector.snapshot()
+            self._raise_for_terminal_state(
+                snapshot,
+                action=action,
+                allow_mbs_states=allow_mbs_states,
+            )
+            return False
+
+        try:
+            return self._wait(_guarded, timeout=timeout, poll_frequency=poll_frequency)
+        except TimeoutException as exc:
+            snapshot = self.state_detector.snapshot()
+            self._raise_for_terminal_state(
+                snapshot,
+                action=action,
+                allow_mbs_states=allow_mbs_states,
+            )
+            raise MbsCheckerError(
+                f"{action} timed out while waiting for expected portal response: "
+                f"{self._describe_snapshot(snapshot)}"
+            ) from exc
 
     def _is_form_ready_now(self) -> bool:
         snapshot = self.state_detector.snapshot()
@@ -141,6 +223,81 @@ class MbsChecker:
             el.dispatchEvent(new Event('blur', {bubbles: true}));
         """, element)
 
+    def _fill_patient_form_fast(self, medicare_number: str, irn: str, first_name: str):
+        provider_location = self.config.mbs.provider_location
+        changed = self.driver.execute_script(
+            """
+            const [medicare, irn, firstName, providerLocation] = arguments;
+
+            function byId(id) {
+                return document.getElementById(id);
+            }
+
+            function setValue(el, value) {
+                if (!el) return false;
+                const changed = el.value !== value;
+                el.value = value;
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+                el.dispatchEvent(new Event('blur', {bubbles: true}));
+                return changed;
+            }
+
+            const mc = byId('guiForm:guiMedicareCardNumber');
+            const irnEl = byId('guiForm:guiIndividualReferenceNumber');
+            const name = byId('guiForm:guiFirstName');
+            const consent = byId('guiForm:gui_patientConsentGiven');
+            const provider = byId('guiForm:gui_providerLocation');
+
+            if (!mc || !irnEl || !name || !consent || !provider) {
+                return {ok: false, changed: false};
+            }
+
+            let changedAny = false;
+            changedAny = setValue(mc, medicare) || changedAny;
+            changedAny = setValue(irnEl, irn) || changedAny;
+            changedAny = setValue(name, firstName) || changedAny;
+
+            if (!consent.checked) {
+                consent.click();
+                changedAny = true;
+            }
+
+            if (provider.value !== providerLocation) {
+                provider.value = providerLocation;
+                provider.dispatchEvent(new Event('change', {bubbles: true}));
+                provider.dispatchEvent(new Event('blur', {bubbles: true}));
+                changedAny = true;
+            }
+
+            return {ok: true, changed: changedAny};
+            """,
+            medicare_number,
+            irn,
+            first_name,
+            provider_location,
+        )
+
+        if not changed or not changed.get("ok"):
+            raise MbsCheckerError("Patient form fields are not available on the page")
+
+        self._wait(
+            lambda d: (
+                d.find_element(By.ID, "guiForm:guiMedicareCardNumber").get_attribute("value") == medicare_number
+                and d.find_element(By.ID, "guiForm:guiIndividualReferenceNumber").get_attribute("value") == irn
+                and d.find_element(By.ID, "guiForm:guiFirstName").get_attribute("value") == first_name
+                and d.find_element(By.ID, "guiForm:gui_patientConsentGiven").is_selected()
+                and Select(d.find_element(By.ID, "guiForm:gui_providerLocation")).first_selected_option.get_attribute("value") == provider_location
+            ),
+            timeout=3,
+        )
+
+        wait_for_ajax(
+            self.driver,
+            timeout=self.wait_timeout,
+            settle_delay=self.ajax_stability_delay,
+        )
+
     # -- Patient form ---------------------------------------------------------
 
     def fill_patient_form(self, medicare_number: str, irn: str, first_name: str):
@@ -154,35 +311,11 @@ class MbsChecker:
             raise MbsCheckerError("First name cannot be empty")
 
         log(f"Filling patient form: {first_name}")
-
-        mc_field = self._wait(EC.element_to_be_clickable(
-            (By.ID, "guiForm:guiMedicareCardNumber")
-        ))
-        mc_field.click()
-        self._set_field_value(mc_field, medicare_number)
-
-        irn_field = self.driver.find_element(
-            By.ID, "guiForm:guiIndividualReferenceNumber"
+        self._wait(
+            EC.presence_of_element_located((By.ID, "guiForm:guiMedicareCardNumber")),
+            timeout=3,
         )
-        irn_field.click()
-        self._set_field_value(irn_field, irn)
-
-        name_field = self.driver.find_element(By.ID, "guiForm:guiFirstName")
-        name_field.click()
-        self._set_field_value(name_field, first_name)
-
-        consent_cb = self.driver.find_element(
-            By.ID, "guiForm:gui_patientConsentGiven"
-        )
-        if not consent_cb.is_selected():
-            self.driver.execute_script("arguments[0].click();", consent_cb)
-            wait_for_ajax(self.driver)
-
-        location_select = Select(
-            self.driver.find_element(By.ID, "guiForm:gui_providerLocation")
-        )
-        location_select.select_by_value(self.config.mbs.provider_location)
-        wait_for_ajax(self.driver)
+        self._fill_patient_form_fast(medicare_number, irn, first_name)
 
         log("Patient form filled")
 
@@ -194,13 +327,67 @@ class MbsChecker:
         if len(items) > 5:
             raise MbsCheckerError("Maximum of 5 MBS items can be selected")
 
-        log(f"Selecting MBS items: {items}")
+        padded_items = [item.zfill(5) for item in items]
+        log(f"Selecting MBS items: {padded_items}")
         self._current_tab_text = None
+        current_selected = self._get_selected_items()
 
-        for item_number in items:
-            self._select_single_item(item_number)
+        tab_groups, fallback_items = self._group_items_by_tab(padded_items)
 
-        log(f"All {len(items)} MBS items selected")
+        # Each tick fires a PrimeFaces AJAX round-trip that re-renders the
+        # selection panel; clicking the next box before the previous item
+        # appears in the side panel silently drops earlier selections. So
+        # confirm each item in the panel (fast 0.1s poll) before moving on.
+        for tab_text, tab_items in tab_groups:
+            self._switch_to_tab_by_text(tab_text)
+            for padded_item in tab_items:
+                if padded_item in current_selected:
+                    log(f"MBS item already selected: {padded_item}")
+                    continue
+                self._click_item_checkbox(
+                    padded_item,
+                    previous_selected=current_selected,
+                )
+                current_selected.add(padded_item)
+                log(f"Selected MBS item: {padded_item}")
+
+        for padded_item in fallback_items:
+            if padded_item in current_selected:
+                log(f"MBS item already selected: {padded_item}")
+                continue
+            self._select_single_item(
+                padded_item,
+                previous_selected=current_selected,
+            )
+            current_selected.add(padded_item)
+
+        log(f"All {len(padded_items)} MBS items selected")
+
+    def _group_items_by_tab(self, padded_items: list[str]) -> tuple[list[tuple[str, list[str]]], list[str]]:
+        tab_ranges = self._get_tab_ranges()
+        grouped: list[tuple[str, list[str]]] = []
+        fallback_items: list[str] = []
+
+        for padded_item in padded_items:
+            item_num = int(padded_item)
+            target_tab = next(
+                (
+                    tab["text"]
+                    for tab in tab_ranges
+                    if tab["low"] <= item_num <= tab["high"]
+                ),
+                None,
+            )
+            if target_tab is None:
+                fallback_items.append(padded_item)
+                continue
+
+            if grouped and grouped[-1][0] == target_tab:
+                grouped[-1][1].append(padded_item)
+            else:
+                grouped.append((target_tab, [padded_item]))
+
+        return grouped, fallback_items
 
     def _get_active_tab_text(self) -> str | None:
         selectors = [
@@ -235,7 +422,7 @@ class MbsChecker:
         padded_item: str,
         *,
         previous_selected: set[str],
-        timeout: int = 10,
+        timeout: int = 4,
     ):
         def _item_selected(driver):
             selected_items = self._get_selected_items()
@@ -251,9 +438,18 @@ class MbsChecker:
                 return True
             return checkbox.is_selected()
 
-        self._wait(_item_selected, timeout=timeout)
+        self._wait_for_expected_or_terminal(
+            _item_selected,
+            action=f"Selecting item {padded_item}",
+            timeout=timeout,
+            allow_mbs_states=True,
+            poll_frequency=0.1,
+        )
 
     def _get_tab_ranges(self) -> List[Dict]:
+        if self._tab_ranges_cache:
+            return list(self._tab_ranges_cache)
+
         for attempt in range(3):
             tabs = []
             tab_links = self.driver.find_elements(By.CSS_SELECTOR, _TAB_NAV_CSS)
@@ -275,12 +471,83 @@ class MbsChecker:
                             "low": int(match.group(1)),
                             "high": int(match.group(2)),
                         })
+                self._tab_ranges_cache = list(tabs)
                 return tabs
             except StaleElementReferenceException:
                 log(f"Tab list became stale while reading ranges, retrying ({attempt + 1}/3)")
-                wait_for_ajax(self.driver)
+                self._tab_ranges_cache = None
+                wait_for_ajax(
+                    self.driver,
+                    timeout=self.wait_timeout,
+                    settle_delay=self.ajax_stability_delay,
+                )
 
         raise MbsCheckerError("Tab navigation became stale while reading item ranges")
+
+    def _switch_to_tab_by_text(self, target_text: str):
+        tabs = self._get_tab_ranges()
+        target = next((tab for tab in tabs if tab["text"] == target_text), None)
+        if target is None:
+            raise MbsCheckerError(f"Could not find tab {target_text}")
+
+        active_tab_text = self._get_active_tab_text()
+        if self._current_tab_text == target["text"] and active_tab_text == target["text"]:
+            return
+
+        log(f"Switching to tab: {target['text']}")
+        try:
+            target["element"].click()
+        except StaleElementReferenceException:
+            log("Target tab went stale before click, re-reading tab list")
+            self._tab_ranges_cache = None
+            refreshed_tabs = self._get_tab_ranges()
+            refreshed_target = next(
+                (tab for tab in refreshed_tabs if tab["text"] == target["text"]),
+                None,
+            )
+            if refreshed_target is None:
+                raise MbsCheckerError(f"Could not re-find tab {target['text']}")
+            try:
+                refreshed_target["element"].click()
+            except Exception:
+                self.driver.execute_script("arguments[0].click();", refreshed_target["element"])
+        except Exception:
+            self.driver.execute_script("arguments[0].click();", target["element"])
+
+        wait_for_ajax(
+            self.driver,
+            timeout=self.wait_timeout,
+            settle_delay=self.ajax_stability_delay,
+        )
+
+        try:
+            self._wait_for_expected_or_terminal(
+                lambda d: self._get_active_tab_text() == target["text"],
+                action=f"Switching to item tab {target['text']}",
+                timeout=3,
+                allow_mbs_states=True,
+            )
+        except MbsCheckerError:
+            raise
+        except Exception:
+            log(f"Warning: active tab did not confirm as {target['text']}")
+
+        try:
+            self._wait_for_expected_or_terminal(
+                lambda d: len(d.find_elements(
+                    By.CSS_SELECTOR,
+                    "div.ui-tabs-panel:not(.ui-helper-hidden) input[type='checkbox']",
+                )) > 0,
+                action=f"Loading item tab {target['text']}",
+                timeout=3,
+                allow_mbs_states=True,
+            )
+        except MbsCheckerError:
+            raise
+        except Exception:
+            log("Warning: no checkboxes found in active tab panel")
+
+        self._current_tab_text = self._get_active_tab_text() or target["text"]
 
     def _switch_to_tab(self, padded: str):
         item_num = int(padded)
@@ -304,49 +571,14 @@ class MbsChecker:
         if self._current_tab_text == target["text"] and active_tab_text == target["text"]:
             return
 
-        log(f"Switching to tab: {target['text']}")
-        try:
-            target["element"].click()
-        except StaleElementReferenceException:
-            log("Target tab went stale before click, re-reading tab list")
-            refreshed_tabs = self._get_tab_ranges()
-            refreshed_target = next(
-                (tab for tab in refreshed_tabs if tab["text"] == target["text"]),
-                None,
-            )
-            if refreshed_target is None:
-                raise MbsCheckerError(f"Could not re-find tab {target['text']}")
-            try:
-                refreshed_target["element"].click()
-            except Exception:
-                self.driver.execute_script("arguments[0].click();", refreshed_target["element"])
-        except Exception:
-            self.driver.execute_script("arguments[0].click();", target["element"])
+        self._switch_to_tab_by_text(target["text"])
 
-        wait_for_ajax(self.driver)
-
-        try:
-            self._wait(
-                lambda d: self._get_active_tab_text() == target["text"],
-                timeout=5
-            )
-        except TimeoutException:
-            log(f"Warning: active tab did not confirm as {target['text']}")
-
-        try:
-            self._wait(
-                lambda d: len(d.find_elements(
-                    By.CSS_SELECTOR,
-                    "div.ui-tabs-panel:not(.ui-helper-hidden) input[type='checkbox']",
-                )) > 0,
-                timeout=5
-            )
-        except TimeoutException:
-            log("Warning: no checkboxes found in active tab panel")
-
-        self._current_tab_text = self._get_active_tab_text() or target["text"]
-
-    def _select_single_item(self, item_number: str):
+    def _select_single_item(
+        self,
+        item_number: str,
+        *,
+        previous_selected: set[str] | None = None,
+    ):
         padded = item_number.zfill(5)
         log(f"Selecting MBS item: {padded}")
 
@@ -356,11 +588,17 @@ class MbsChecker:
             return
 
         try:
-            self._click_item_checkbox(padded)
+            self._click_item_checkbox(
+                padded,
+                previous_selected=previous_selected,
+            )
             log(f"Selected MBS item: {padded}")
         except NoSuchElementException:
             log(f"Item {padded} not found in expected tab, searching all tabs")
-            if not self._search_all_tabs(padded):
+            if not self._search_all_tabs(
+                padded,
+                previous_selected=previous_selected,
+            ):
                 raise MbsCheckerError(f"Could not find MBS item {padded} in any tab")
 
     def _find_item_checkbox(self, padded_item: str, *, prefer_active_panel: bool) -> object:
@@ -393,17 +631,29 @@ class MbsChecker:
 
         raise NoSuchElementException(f"Checkbox for item {padded_item} not found")
 
-    def _click_item_checkbox(self, padded_item: str):
-        previous_selected = self._get_selected_items()
+    def _click_item_checkbox(
+        self,
+        padded_item: str,
+        *,
+        previous_selected: set[str] | None = None,
+    ):
+        if previous_selected is None:
+            previous_selected = self._get_selected_items()
+        else:
+            previous_selected = set(previous_selected)
 
         checkbox = self._find_item_checkbox(padded_item, prefer_active_panel=True)
         if not checkbox.is_selected():
             self.driver.execute_script("arguments[0].click();", checkbox)
-        wait_for_ajax(self.driver)
         self._wait_for_item_selected(padded_item, previous_selected=previous_selected)
         self._current_tab_text = self._get_active_tab_text()
 
-    def _search_all_tabs(self, padded_item: str) -> bool:
+    def _search_all_tabs(
+        self,
+        padded_item: str,
+        *,
+        previous_selected: set[str] | None = None,
+    ) -> bool:
         i = 0
         while True:
             try:
@@ -411,11 +661,20 @@ class MbsChecker:
                 if i >= len(fresh_tabs):
                     break
                 fresh_tabs[i]["element"].click()
-                wait_for_ajax(self.driver)
-                self._click_item_checkbox(padded_item)
+                wait_for_ajax(
+                    self.driver,
+                    timeout=self.wait_timeout,
+                    settle_delay=self.ajax_stability_delay,
+                )
+                self._click_item_checkbox(
+                    padded_item,
+                    previous_selected=previous_selected,
+                )
                 self._current_tab_text = fresh_tabs[i]["text"]
                 log(f"Found and selected {padded_item} in tab {fresh_tabs[i]['text']}")
                 return True
+            except MbsCheckerError:
+                raise
             except (NoSuchElementException, TimeoutException, StaleElementReferenceException):
                 i += 1
                 continue
@@ -455,13 +714,15 @@ class MbsChecker:
         # whichever DOM change appears first.
         timeout = self.config.session.page_load_timeout
         try:
-            outcome = self._wait(
+            outcome = self._wait_for_expected_or_terminal(
                 lambda d: self._detect_submit_outcome(d),
-                timeout=timeout
+                action="Submitting MBS check",
+                timeout=timeout,
+                allow_mbs_states=True,
             )
-        except TimeoutException:
+        except MbsCheckerError:
             self._check_patient_validation_error()
-            raise MbsCheckerError("No response from portal after submission")
+            raise
 
         if outcome == "dialog":
             log("Multiple items confirmation dialog - clicking Continue")
@@ -472,16 +733,18 @@ class MbsChecker:
             continue_btn.click()
             # After dialog, wait for results or no-results
             try:
-                self._wait(
+                self._wait_for_expected_or_terminal(
                     lambda d: (
                         d.find_elements(By.ID, "guiForm:guiMbsItemNumberSearchResults")
                         or self._is_no_results_visible(d)
                     ),
-                    timeout=timeout
+                    action="Waiting for MBS results after confirmation",
+                    timeout=timeout,
+                    allow_mbs_states=True,
                 )
-            except TimeoutException:
+            except MbsCheckerError:
                 self._check_patient_validation_error()
-                raise MbsCheckerError("Results table did not appear after confirmation")
+                raise
 
         self._check_patient_validation_error()
         log("Results table loaded")
@@ -617,6 +880,7 @@ class MbsChecker:
     def reset_form_button(self):
         """Click the form reset button to clear all fields."""
         log("Attempting form reset via button")
+        self._tab_ranges_cache = None
         selectors = [
             (By.ID, "guiForm:gui_reset"),
             (By.ID, "guiForm:gui_searchAgain"),
@@ -640,6 +904,7 @@ class MbsChecker:
     def refresh_page_f5(self):
         """Refresh the page using F5 keyboard shortcut."""
         log("Refreshing page with F5")
+        self._tab_ranges_cache = None
         try:
             self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.F5)
             self.wait_until_form_ready(timeout=self.config.session.page_load_timeout)
@@ -664,7 +929,6 @@ class MbsChecker:
         if snapshot.state not in {
             PortalPageState.MBS_FORM,
             PortalPageState.MBS_RESULTS,
-            PortalPageState.UNKNOWN,
         }:
             raise MbsCheckerError(
                 f"Cannot recover MBS page from state={snapshot.state.value}"

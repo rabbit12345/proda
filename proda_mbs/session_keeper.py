@@ -3,15 +3,28 @@ from __future__ import annotations
 import threading
 import time
 
+from selenium.webdriver.common.by import By
+
 from .waits import log
+
+_LOGGED_OFF_URL_MARKERS = (
+    "timeout.jsf",
+    "/timeout",
+    "ajaxtimeout",
+    "loggedout",
+    "logged-out",
+)
 
 
 class SessionKeeper:
-    """Track when the foreground workflow must refresh or revalidate session state.
+    """Keep the portal session alive while the workflow is idle.
 
-    This class deliberately does not touch Selenium from a background thread.
-    The timer only marks that a refresh check is due; the foreground workflow
-    performs all browser inspection, reset, refresh, and relogin actions.
+    Every interval the background timer tries to take the driver lock without
+    blocking. If the foreground workflow is busy the session is being used
+    anyway, so nothing needs to happen. If the lock is free, the keeper checks
+    for an obvious logged-off state (URL markers or the login field) and
+    otherwise fires a same-origin fetch from the page so the server-side
+    session is renewed without touching the DOM.
     """
 
     def __init__(
@@ -25,7 +38,6 @@ class SessionKeeper:
         self.interval = interval_seconds
         self.driver_lock = driver_lock or threading.Lock()
         self._after_ping = after_ping
-        self._keepalive_action = None
         self._timer = None
         self._running = False
         self._session_lost = threading.Event()
@@ -69,9 +81,6 @@ class SessionKeeper:
                 self._last_reset_at = time.monotonic()
                 self._schedule_next_locked()
 
-    def set_keepalive_action(self, action):
-        self._keepalive_action = action
-
     def _schedule_next_locked(self):
         if self._running:
             generation = self._generation
@@ -83,16 +92,52 @@ class SessionKeeper:
         if not self._running or generation != self._generation:
             return
 
-        self._refresh_due.set()
-        idle_seconds = int(time.monotonic() - self._last_reset_at)
-        log(
-            "Session refresh due; next foreground action will validate page state "
-            f"and refresh or relogin as needed (idle {idle_seconds}s)"
-        )
+        pinged = False
+        if self.driver_lock.acquire(blocking=False):
+            try:
+                pinged = self._do_keepalive()
+            finally:
+                self.driver_lock.release()
+        else:
+            # Foreground is actively using the browser, so the session is
+            # being kept alive by real activity.
+            pinged = True
+
+        if not pinged:
+            self._refresh_due.set()
+            idle_seconds = int(time.monotonic() - self._last_reset_at)
+            log(
+                "Keepalive ping failed; next foreground action will validate "
+                f"page state and refresh or relogin as needed (idle {idle_seconds}s)"
+            )
+
         if self._after_ping:
             self._after_ping()
         with self._schedule_lock:
             self._schedule_next_locked()
+
+    def _do_keepalive(self) -> bool:
+        try:
+            url = str(self.driver.current_url or "").lower()
+            logged_off = any(marker in url for marker in _LOGGED_OFF_URL_MARKERS)
+            if not logged_off:
+                logged_off = bool(
+                    self.driver.find_elements(By.ID, "loginFormAndStuff:username")
+                )
+            if logged_off:
+                self.mark_session_lost()
+                return True
+
+            self.driver.execute_script(
+                "try { fetch(window.location.href, "
+                "{credentials: 'same-origin', cache: 'no-store'}); } catch (e) {}"
+            )
+            self._last_reset_at = time.monotonic()
+            log("Keepalive ping sent (session renewed)")
+            return True
+        except Exception as exc:
+            log(f"Keepalive ping error: {exc}")
+            return False
 
     def mark_session_lost(self):
         if not self._session_lost.is_set():
