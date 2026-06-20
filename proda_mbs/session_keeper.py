@@ -3,17 +3,8 @@ from __future__ import annotations
 import threading
 import time
 
-from selenium.webdriver.common.by import By
-
+from .page_state import PageStateDetector, PortalPageState
 from .waits import log
-
-_LOGGED_OFF_URL_MARKERS = (
-    "timeout.jsf",
-    "/timeout",
-    "ajaxtimeout",
-    "loggedout",
-    "logged-out",
-)
 
 
 class SessionKeeper:
@@ -21,10 +12,10 @@ class SessionKeeper:
 
     Every interval the background timer tries to take the driver lock without
     blocking. If the foreground workflow is busy the session is being used
-    anyway, so nothing needs to happen. If the lock is free, the keeper checks
-    for an obvious logged-off state (URL markers or the login field) and
-    otherwise fires a same-origin fetch from the page so the server-side
-    session is renewed without touching the DOM.
+    anyway, so nothing needs to happen. If the lock is free, the keeper takes a
+    page-state snapshot; a logged-off/expired state marks the session lost so
+    recovery can run, otherwise it fires a same-origin fetch from the page so
+    the server-side session is renewed without touching the DOM.
     """
 
     def __init__(
@@ -35,6 +26,7 @@ class SessionKeeper:
         after_ping=None,
     ):
         self.driver = driver
+        self._detector = PageStateDetector(driver)
         self.interval = interval_seconds
         self.driver_lock = driver_lock or threading.Lock()
         self._after_ping = after_ping
@@ -65,10 +57,12 @@ class SessionKeeper:
         log(f"Session keeper started (interval: {self.interval}s)")
 
     def stop(self):
-        self._running = False
-        if self._timer:
-            self._timer.cancel()
-            self._timer = None
+        with self._schedule_lock:
+            self._running = False
+            self._generation += 1
+            if self._timer:
+                self._timer.cancel()
+                self._timer = None
         log("Session keeper stopped")
 
     def reset(self):
@@ -92,41 +86,53 @@ class SessionKeeper:
         if not self._running or generation != self._generation:
             return
 
-        pinged = False
+        renewed = False
         if self.driver_lock.acquire(blocking=False):
             try:
-                pinged = self._do_keepalive()
+                # Re-check after acquiring the lock: stop()/mark_session_lost()
+                # may have run while the timer was firing, and the driver may
+                # be tearing down. Pinging it then can wedge the process.
+                if not self._running or generation != self._generation:
+                    return
+                renewed = self._do_keepalive()
             finally:
                 self.driver_lock.release()
-        else:
-            # Foreground is actively using the browser, so the session is
-            # being kept alive by real activity.
-            pinged = True
 
-        if not pinged:
-            self._refresh_due.set()
-            idle_seconds = int(time.monotonic() - self._last_reset_at)
-            log(
-                "Keepalive ping failed; next foreground action will validate "
-                f"page state and refresh or relogin as needed (idle {idle_seconds}s)"
-            )
+            if not renewed and not self._session_lost.is_set():
+                self._refresh_due.set()
+                idle_seconds = int(time.monotonic() - self._last_reset_at)
+                log(
+                    "Keepalive ping failed; next foreground action will validate "
+                    f"page state and refresh or relogin as needed (idle {idle_seconds}s)"
+                )
+        # else: foreground is actively using the browser under the lock, so the
+        # session is being kept alive by real activity — nothing to do.
 
-        if self._after_ping:
+        # Only run side effects (console refocus / clipboard) on a genuine
+        # renewal, never on no-op or failed pings.
+        if renewed and self._after_ping:
             self._after_ping()
         with self._schedule_lock:
-            self._schedule_next_locked()
+            if self._running and generation == self._generation:
+                self._schedule_next_locked()
 
     def _do_keepalive(self) -> bool:
+        """Validate the session, then renew it. Returns True only on a genuine
+        renewal of a still-live session."""
         try:
-            url = str(self.driver.current_url or "").lower()
-            logged_off = any(marker in url for marker in _LOGGED_OFF_URL_MARKERS)
-            if not logged_off:
-                logged_off = bool(
-                    self.driver.find_elements(By.ID, "loginFormAndStuff:username")
-                )
-            if logged_off:
+            snapshot = self._detector.snapshot()
+
+            if snapshot.state == PortalPageState.BROWSER_UNAVAILABLE:
+                # Transient transport glitch reading the page. Don't tear the
+                # keeper down on a single bad read — defer to the next
+                # foreground action to validate and recover.
+                return False
+
+            if snapshot.needs_relogin:
+                # A positive logged-off/expired signal (login form, OTP page,
+                # session-expired or logged-out interstitial, off-site URL).
                 self.mark_session_lost()
-                return True
+                return False
 
             self.driver.execute_script(
                 "try { fetch(window.location.href, "
@@ -140,10 +146,13 @@ class SessionKeeper:
             return False
 
     def mark_session_lost(self):
-        if not self._session_lost.is_set():
+        with self._schedule_lock:
+            already_lost = self._session_lost.is_set()
+            self._session_lost.set()
+            self._running = False
+            self._generation += 1
+            if self._timer:
+                self._timer.cancel()
+                self._timer = None
+        if not already_lost:
             log("SESSION LOST: session expired, logged out, or browser state diverged")
-        self._session_lost.set()
-        self._running = False
-        if self._timer:
-            self._timer.cancel()
-            self._timer = None

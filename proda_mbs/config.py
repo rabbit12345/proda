@@ -32,7 +32,7 @@ class MbsConfig:
 
 @dataclass
 class SessionConfig:
-    keepalive_interval_seconds: int = 180
+    keepalive_interval_seconds: int = 300
     page_load_timeout: int = 30
     element_wait_timeout: int = 15
     ajax_stability_delay: float = 0.05

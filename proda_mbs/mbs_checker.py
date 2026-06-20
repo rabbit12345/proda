@@ -407,14 +407,16 @@ class MbsChecker:
         items = set()
         try:
             panel = self.driver.find_element(By.ID, "guiForm:itemSelector")
-        except NoSuchElementException:
+            for label in panel.find_elements(By.XPATH, "./div"):
+                text = label.text.strip()
+                match = re.match(r"^(\d{5})", text)
+                if match:
+                    items.add(match.group(1))
+        except (NoSuchElementException, StaleElementReferenceException):
+            # The selector panel re-renders via AJAX during selection; a stale
+            # read means it is mid-update, so return what was gathered and let
+            # the caller's poll retry on the next tick.
             return items
-
-        for label in panel.find_elements(By.XPATH, "./div"):
-            text = label.text.strip()
-            match = re.match(r"^(\d{5})", text)
-            if match:
-                items.add(match.group(1))
         return items
 
     def _wait_for_item_selected(

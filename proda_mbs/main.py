@@ -424,6 +424,10 @@ def main():
                     recovery_attempts = 0
                 except (LoginError, NavigationError, MbsCheckerError) as exc:
                     log(f"Session recovery failed: {exc}")
+                    # _recover_session stopped the old keeper before failing, so
+                    # without this the session would read as valid yet never be
+                    # pinged again. Mark it lost so the loop re-enters recovery.
+                    session_keeper.mark_session_lost()
                     pending_patient = patient
                     continue
 
@@ -485,6 +489,11 @@ def main():
                 # The check never produced results because the session died;
                 # rerun this patient automatically after relogin.
                 pending_patient = patient
+            elif result is not None:
+                # A clean check proves the session is healthy; clear the
+                # recovery counter so it tracks consecutive failures, not the
+                # lifetime total (otherwise three blips hours apart quit the app).
+                recovery_attempts = 0
 
             first_check = False
 
