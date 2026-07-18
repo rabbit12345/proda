@@ -20,6 +20,7 @@ mbs:
 
 session:
   keepalive_interval_seconds: 300   # Keep-alive interval (5 minutes)
+  preemptive_relogin_seconds: 21600 # Re-login before absolute session cap (6h, 0 disables)
   page_load_timeout: 30             # Page load timeout in seconds
   element_wait_timeout: 15          # Element wait timeout in seconds
   ajax_stability_delay: 0.05        # Delay between AJAX interactions in seconds

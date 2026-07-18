@@ -4,6 +4,7 @@ import argparse
 import ctypes
 import sys
 import threading
+import time
 
 from .auth import LoginError, ProdaAuthenticator
 from .config import ConfigError, create_driver, load_config
@@ -168,38 +169,6 @@ def _prompt_patient_details_step_by_step() -> tuple[str, str, str] | None:
         idx += 1
 
     return values[0], values[1], values[2]
-
-
-def _recover_session(
-    driver,
-    config,
-    old_session_keeper: SessionKeeper,
-    driver_lock: threading.Lock,
-    after_ping=None,
-) -> tuple[SessionKeeper, MbsChecker, HposNavigator, PageStateDetector]:
-    log("Attempting session recovery (re-login)...")
-    old_session_keeper.stop()
-
-    with driver_lock:
-        auth = ProdaAuthenticator(driver, config)
-        auth.login()
-
-        navigator = HposNavigator(driver, config)
-        navigator.navigate_to_mbs_checker_full()
-        checker = MbsChecker(driver, config)
-        detector = PageStateDetector(driver)
-        checker.wait_until_form_ready()
-
-    new_session_keeper = SessionKeeper(
-        driver,
-        config.session.keepalive_interval_seconds,
-        driver_lock=driver_lock,
-        after_ping=after_ping,
-    )
-    new_session_keeper.start()
-
-    log("Session recovery successful")
-    return new_session_keeper, checker, navigator, detector
 
 
 def _ensure_mbs_context(
@@ -367,6 +336,60 @@ def main():
         )
         session_keeper.start()
 
+        # Recovery is shared between the foreground loop and the background
+        # watchdog. It restarts the existing keeper rather than rebuilding the
+        # helper objects (they are stateless wrappers around the driver), so it
+        # is safe to run from any thread. recovery_lock serializes re-login
+        # against the per-patient foreground work; both always acquire
+        # recovery_lock before driver_lock.
+        recovery_lock = threading.Lock()
+        form_fresh = threading.Event()
+        watchdog_stop = threading.Event()
+        last_login = {"at": time.monotonic()}
+
+        def _try_recover(reason: str) -> bool:
+            with recovery_lock:
+                if reason == "session lost" and session_keeper.is_session_valid:
+                    return True  # another thread already recovered
+                log(f"Attempting re-login ({reason})...")
+                session_keeper.stop()
+                try:
+                    with driver_lock:
+                        ProdaAuthenticator(driver, config).login()
+                        navigator.navigate_to_mbs_checker_full()
+                        checker.wait_until_form_ready()
+                except (LoginError, NavigationError, MbsCheckerError) as exc:
+                    log(f"Re-login failed: {exc}")
+                    session_keeper.mark_session_lost()
+                    return False
+                session_keeper.start()
+                last_login["at"] = time.monotonic()
+                form_fresh.set()
+                log("Re-login successful")
+                return True
+
+        def _watchdog():
+            # Relogs in as soon as the keeper marks the session lost (instead
+            # of waiting for the next patient prompt) and preemptively before
+            # the portal's absolute session cap. Never gives up: unattended
+            # overnight operation just retries with capped backoff.
+            failures = 0
+            preemptive = config.session.preemptive_relogin_seconds
+            while not watchdog_stop.wait(30):
+                if not session_keeper.is_session_valid:
+                    if _try_recover("session lost"):
+                        failures = 0
+                    else:
+                        failures += 1
+                        delay = min(600, 60 * (2 ** min(failures, 4)))
+                        log(f"Background recovery failed; retrying in {delay}s")
+                        if watchdog_stop.wait(delay):
+                            return
+                elif preemptive and time.monotonic() - last_login["at"] >= preemptive:
+                    _try_recover("preemptive re-login before absolute session timeout")
+
+        threading.Thread(target=_watchdog, name="session-watchdog", daemon=True).start()
+
         if args.medicare and args.irn and args.name:
             with driver_lock:
                 _ensure_mbs_context(
@@ -393,6 +416,7 @@ def main():
         first_check = not (args.medicare and args.irn and args.name)
         skip_form_reset = False
         recovery_attempts = 0
+        prepare_attempts = 0
         pending_patient: tuple[str, str, str] | None = None
 
         while True:
@@ -416,74 +440,82 @@ def main():
                     f"Session invalid, recovering "
                     f"(attempt {recovery_attempts}/{_MAX_RECOVERY_ATTEMPTS})..."
                 )
-                try:
-                    session_keeper, checker, navigator, state_detector = _recover_session(
-                        driver, config, session_keeper, driver_lock, after_ping=_after_ping
-                    )
-                    first_check = True
-                    recovery_attempts = 0
-                except (LoginError, NavigationError, MbsCheckerError) as exc:
-                    log(f"Session recovery failed: {exc}")
-                    # _recover_session stopped the old keeper before failing, so
-                    # without this the session would read as valid yet never be
-                    # pinged again. Mark it lost so the loop re-enters recovery.
-                    session_keeper.mark_session_lost()
+                if not _try_recover("session lost"):
                     pending_patient = patient
                     continue
+                recovery_attempts = 0
 
-            try:
-                with driver_lock:
-                    _ensure_mbs_context(
-                        navigator,
+            # Hold recovery_lock across the whole per-patient sequence so the
+            # watchdog cannot relogin (and navigate away) mid-check.
+            with recovery_lock:
+                if form_fresh.is_set():
+                    # A relogin just landed us on a fresh form; no reset needed.
+                    form_fresh.clear()
+                    first_check = True
+
+                try:
+                    with driver_lock:
+                        _ensure_mbs_context(
+                            navigator,
+                            checker,
+                            session_keeper,
+                            state_detector,
+                            require_fresh_form=(
+                                session_keeper.needs_refresh
+                                or (not first_check and not skip_form_reset)
+                            ),
+                        )
+                except (MbsCheckerError, NavigationError) as exc:
+                    log(f"Could not prepare MBS page: {exc}")
+                    if not session_keeper.is_session_valid:
+                        pending_patient = patient
+                    elif prepare_attempts < 1:
+                        # Session still looks healthy; keep the patient the
+                        # user just typed and retry preparation once.
+                        prepare_attempts += 1
+                        pending_patient = patient
+                        log("Retrying page preparation for this patient")
+                    else:
+                        prepare_attempts = 0
+                        log("Page preparation failed twice; please re-enter the patient")
+                    continue
+
+                prepare_attempts = 0
+                skip_form_reset = False
+                try:
+                    result = run_single_check(
                         checker,
                         session_keeper,
                         state_detector,
-                        require_fresh_form=(
-                            session_keeper.needs_refresh
-                            or (not first_check and not skip_form_reset)
-                        ),
+                        patient[0],
+                        patient[1],
+                        patient[2],
+                        args.items,
+                        driver_lock=driver_lock,
                     )
-            except (MbsCheckerError, NavigationError) as exc:
-                log(f"Could not prepare MBS page: {exc}")
-                if not session_keeper.is_session_valid:
-                    pending_patient = patient
-                continue
+                except InvalidPatientError as exc:
+                    print(f"\n  ** {exc}")
+                    print("  Patient fields cleared - item selection preserved.")
+                    print("  Please re-enter patient details.\n")
+                    skip_form_reset = True
+                    _prime_clipboard_async()
+                    _refocus_console_async()
+                    continue
 
-            skip_form_reset = False
-            try:
-                result = run_single_check(
-                    checker,
-                    session_keeper,
-                    state_detector,
-                    patient[0],
-                    patient[1],
-                    patient[2],
-                    args.items,
-                    driver_lock=driver_lock,
-                )
-            except InvalidPatientError as exc:
-                print(f"\n  ** {exc}")
-                print("  Patient fields cleared - item selection preserved.")
-                print("  Please re-enter patient details.\n")
-                skip_form_reset = True
                 _prime_clipboard_async()
                 _refocus_console_async()
-                continue
 
-            _prime_clipboard_async()
-            _refocus_console_async()
-
-            with driver_lock:
-                post_check_snapshot = state_detector.snapshot()
-                if _state_requires_relogin(post_check_snapshot.state):
-                    log(
-                        "Patient check ended on relogin-required page state: "
-                        f"{post_check_snapshot.state.value}"
-                    )
-                    session_keeper.mark_session_lost()
-                elif result is None and post_check_snapshot.state == PortalPageState.UNKNOWN:
-                    log("Patient check left browser in unknown state - marking session lost")
-                    session_keeper.mark_session_lost()
+                with driver_lock:
+                    post_check_snapshot = state_detector.snapshot()
+                    if _state_requires_relogin(post_check_snapshot.state):
+                        log(
+                            "Patient check ended on relogin-required page state: "
+                            f"{post_check_snapshot.state.value}"
+                        )
+                        session_keeper.mark_session_lost()
+                    elif result is None and post_check_snapshot.state == PortalPageState.UNKNOWN:
+                        log("Patient check left browser in unknown state - marking session lost")
+                        session_keeper.mark_session_lost()
 
             if result is None and not session_keeper.is_session_valid:
                 # The check never produced results because the session died;
@@ -506,6 +538,10 @@ def main():
     except KeyboardInterrupt:
         log("Interrupted by user")
     finally:
+        try:
+            watchdog_stop.set()
+        except NameError:
+            pass  # failed before the watchdog was created
         if session_keeper:
             session_keeper.stop()
         log("Closing browser...")

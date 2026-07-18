@@ -15,8 +15,25 @@ class SessionKeeper:
     anyway, so nothing needs to happen. If the lock is free, the keeper takes a
     page-state snapshot; a logged-off/expired state marks the session lost so
     recovery can run, otherwise it fires a same-origin fetch from the page so
-    the server-side session is renewed without touching the DOM.
+    the server-side session is renewed without touching the DOM. The fetch
+    result is awaited and inspected: a redirect off the HPOS host, an auth
+    error, or an expired/logged-out URL marks the session lost immediately
+    instead of logging a false "renewed".
     """
+
+    _PING_SCRIPT = (
+        "var done = arguments[arguments.length - 1];"
+        "var timer = setTimeout(function () { done({error: 'fetch timeout'}); }, 15000);"
+        "try {"
+        "  fetch(window.location.href,"
+        "        {credentials: 'same-origin', cache: 'no-store', redirect: 'follow'})"
+        "    .then(function (r) {"
+        "      clearTimeout(timer);"
+        "      done({status: r.status, url: r.url, redirected: r.redirected});"
+        "    })"
+        "    .catch(function (e) { clearTimeout(timer); done({error: String(e)}); });"
+        "} catch (e) { clearTimeout(timer); done({error: String(e)}); }"
+    )
 
     def __init__(
         self,
@@ -134,16 +151,48 @@ class SessionKeeper:
                 self.mark_session_lost()
                 return False
 
-            self.driver.execute_script(
-                "try { fetch(window.location.href, "
-                "{credentials: 'same-origin', cache: 'no-store'}); } catch (e) {}"
-            )
+            result = self.driver.execute_async_script(self._PING_SCRIPT)
+            if not isinstance(result, dict):
+                log(f"Keepalive ping returned unexpected result: {result!r}")
+                return False
+            if result.get("error"):
+                log(f"Keepalive ping failed: {result['error']}")
+                return False
+
+            status = int(result.get("status") or 0)
+            final_url = str(result.get("url") or "").lower()
+            redirected = bool(result.get("redirected"))
+            if self._response_marks_session_dead(status, final_url, redirected):
+                log(
+                    "Keepalive ping shows dead session "
+                    f"(status={status}, redirected={redirected}, url={final_url})"
+                )
+                self.mark_session_lost()
+                return False
+            if status >= 400:
+                log(f"Keepalive ping got HTTP {status}; deferring to foreground validation")
+                return False
+
             self._last_reset_at = time.monotonic()
-            log("Keepalive ping sent (session renewed)")
+            log(f"Keepalive ping OK (HTTP {status}, session renewed)")
             return True
         except Exception as exc:
             log(f"Keepalive ping error: {exc}")
             return False
+
+    @staticmethod
+    def _response_marks_session_dead(status: int, final_url: str, redirected: bool) -> bool:
+        if status in (401, 403):
+            return True
+        if PageStateDetector._url_marks_session_expired(final_url):
+            return True
+        if "loggedout" in final_url or "logged-out" in final_url:
+            return True
+        # Renewing a live HPOS session never redirects off the HPOS host; a
+        # redirect elsewhere (PRODA login, error page) means the session died.
+        if redirected and "medicareaustralia.gov.au" not in final_url:
+            return True
+        return False
 
     def mark_session_lost(self):
         with self._schedule_lock:

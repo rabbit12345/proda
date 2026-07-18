@@ -1,8 +1,12 @@
 # Credentials and tokens
-client_secret.json
+client_secret*.json
 token.json
 token.pickle
 config.yaml
+
+# Local debug captures
+entryerror.html
+invalidpt.html
 
 # Build artifacts
 build/
