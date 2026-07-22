@@ -26,7 +26,6 @@ _OTP_SUBJECT_KEYWORDS = ["verification", "otp", "one-time", "security code"]
 
 class GmailOtpExtractor:
     SENDER = "proda@servicesaustralia.gov.au"
-    OTP_SUBJECT = "verification"
     OTP_PATTERN = re.compile(r"^\d{6}$")
 
     def __init__(self, config: GmailConfig):
@@ -104,7 +103,7 @@ class GmailOtpExtractor:
         """Trash only PRODA verification emails (not other PRODA notifications).
         Uses sender + subject query, then double-checks subject keywords."""
         log("Purging old PRODA OTP emails...")
-        query = f"from:{self.SENDER} subject:{self.OTP_SUBJECT}"
+        query = f"from:{self.SENDER}"
         try:
             results = self.service.users().messages().list(
                 userId="me", q=query
@@ -117,13 +116,7 @@ class GmailOtpExtractor:
                     metadataHeaders=["Subject"]
                 ).execute()
 
-                subject = ""
-                for header in msg_meta.get("payload", {}).get("headers", []):
-                    if header["name"].lower() == "subject":
-                        subject = header["value"].lower()
-                        break
-
-                if any(kw in subject for kw in _OTP_SUBJECT_KEYWORDS):
+                if self._is_otp_subject(msg_meta.get("payload", {})):
                     self.service.users().messages().trash(
                         userId="me", id=message["id"]
                     ).execute()
@@ -187,31 +180,25 @@ class GmailOtpExtractor:
             return None
 
         for message in messages:
-            msg_meta = self.service.users().messages().get(
-                userId="me", id=message["id"], format="metadata",
-                metadataHeaders=["Subject"]
-            ).execute()
-
-            subject = ""
-            for header in msg_meta.get("payload", {}).get("headers", []):
-                if header["name"].lower() == "subject":
-                    subject = header["value"].lower()
-                    break
-
-            if not any(kw in subject for kw in _OTP_SUBJECT_KEYWORDS):
-                continue
-
-            msg = self.service.users().messages().get(
-                userId="me", id=message["id"]
-            ).execute()
-
-            # Verify email arrived after we requested the OTP
-            internal_date = int(msg.get("internalDate", 0))
-            if min_timestamp and internal_date < min_timestamp:
-                log(f"Skipping stale email (arrived {internal_date} < requested {min_timestamp})")
-                continue
-
+            # A failure on one message must not abort the whole poll — the
+            # next attempt (3s later) may well succeed, and giving up here
+            # would strand a login on an OTP email that is already present.
             try:
+                # One full fetch per message: the payload already carries the
+                # Subject header, so no separate metadata round-trip is needed.
+                msg = self.service.users().messages().get(
+                    userId="me", id=message["id"]
+                ).execute()
+
+                if not self._is_otp_subject(msg.get("payload", {})):
+                    continue
+
+                # Verify email arrived after we requested the OTP
+                internal_date = int(msg.get("internalDate", 0))
+                if min_timestamp and internal_date < min_timestamp:
+                    log(f"Skipping stale email (arrived {internal_date} < requested {min_timestamp})")
+                    continue
+
                 data = self._get_body_data(msg["payload"])
                 if not data:
                     continue
@@ -228,10 +215,21 @@ class GmailOtpExtractor:
                             userId="me", id=message["id"]
                         ).execute()
                         return code
-            except (KeyError, AttributeError):
+            except Exception as e:
+                log(f"Warning: could not inspect message {message['id']}: {e}")
                 continue
 
         return None
+
+    @staticmethod
+    def _is_otp_subject(payload: dict) -> bool:
+        """True if the message payload's Subject marks it as an OTP email."""
+        subject = ""
+        for header in payload.get("headers", []):
+            if header.get("name", "").lower() == "subject":
+                subject = (header.get("value") or "").lower()
+                break
+        return any(kw in subject for kw in _OTP_SUBJECT_KEYWORDS)
 
     @classmethod
     def _get_body_data(cls, payload: dict) -> str | None:

@@ -72,13 +72,13 @@ def _force_kill_driver_process(driver):
     """Kill the geckodriver/chromedriver process tree so the browser it
     spawned (firefox.exe/chrome.exe) doesn't linger in memory after
     driver.quit() hangs (e.g. an unresponsive tab or renderer)."""
+    # Runs from main's finally: block, so nothing here may raise — a dead or
+    # remote driver can fail in more ways than AttributeError when its
+    # service/process is touched.
     try:
         process = driver.service.process
-    except AttributeError:
-        return
-    if not process or process.poll() is not None:
-        return
-    try:
+        if not process or process.poll() is not None:
+            return
         if sys.platform == "win32":
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(process.pid)],
