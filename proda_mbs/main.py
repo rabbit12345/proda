@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import subprocess
 import sys
 import threading
 import time
@@ -63,7 +64,30 @@ def _quit_driver_with_timeout(driver, timeout: int = 8):
     thread.start()
     thread.join(timeout=timeout)
     if thread.is_alive():
-        log("Browser did not close within timeout - continuing anyway")
+        log("Browser did not close within timeout - force killing driver process tree")
+        _force_kill_driver_process(driver)
+
+
+def _force_kill_driver_process(driver):
+    """Kill the geckodriver/chromedriver process tree so the browser it
+    spawned (firefox.exe/chrome.exe) doesn't linger in memory after
+    driver.quit() hangs (e.g. an unresponsive tab or renderer)."""
+    try:
+        process = driver.service.process
+    except AttributeError:
+        return
+    if not process or process.poll() is not None:
+        return
+    try:
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                capture_output=True,
+            )
+        else:
+            process.kill()
+    except Exception as exc:
+        log(f"Warning: could not force-kill driver process: {exc}")
 
 
 def _prime_clipboard_async():

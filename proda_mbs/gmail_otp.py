@@ -177,7 +177,7 @@ class GmailOtpExtractor:
                            value (milliseconds since epoch). Ensures we
                            don't grab a stale code from a previous request.
         """
-        query = f"from:{self.SENDER} subject:{self.OTP_SUBJECT} newer_than:2m"
+        query = f"from:{self.SENDER} newer_than:2m"
         results = self.service.users().messages().list(
             userId="me", q=query
         ).execute()
@@ -187,6 +187,20 @@ class GmailOtpExtractor:
             return None
 
         for message in messages:
+            msg_meta = self.service.users().messages().get(
+                userId="me", id=message["id"], format="metadata",
+                metadataHeaders=["Subject"]
+            ).execute()
+
+            subject = ""
+            for header in msg_meta.get("payload", {}).get("headers", []):
+                if header["name"].lower() == "subject":
+                    subject = header["value"].lower()
+                    break
+
+            if not any(kw in subject for kw in _OTP_SUBJECT_KEYWORDS):
+                continue
+
             msg = self.service.users().messages().get(
                 userId="me", id=message["id"]
             ).execute()
@@ -219,14 +233,15 @@ class GmailOtpExtractor:
 
         return None
 
-    @staticmethod
-    def _get_body_data(payload: dict) -> str | None:
-        """Extract body data from a Gmail message payload."""
+    @classmethod
+    def _get_body_data(cls, payload: dict) -> str | None:
+        """Extract body data from a Gmail message payload, recursing into
+        nested multipart parts (e.g. multipart/mixed > multipart/alternative)."""
         data = payload.get("body", {}).get("data")
         if data:
             return data
         for part in payload.get("parts", []):
-            part_data = part.get("body", {}).get("data")
+            part_data = cls._get_body_data(part)
             if part_data:
                 return part_data
         return None
