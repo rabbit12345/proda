@@ -94,6 +94,16 @@ class HposNavigator:
 
     def navigate_to_hpos(self):
         log("Navigating to HPOS from My Services")
+
+        # The HPOS sub-session expires well before the PRODA one. When it does,
+        # the browser is left on a stale MBS page (or anywhere else) while
+        # PRODA is still logged in, so load My Services explicitly rather than
+        # assuming we are already on it.
+        snapshot = self.get_page_snapshot()
+        if snapshot.state != PortalPageState.MY_SERVICES:
+            log(f"Not on My Services (state={snapshot.state.value}); loading it")
+            self.driver.get(self.config.proda.url)
+
         try:
             self._wait(EC.title_contains("My Services"),
                        timeout=self.page_timeout)

@@ -61,13 +61,13 @@ class ProdaAuthenticator:
             snapshot = self.state_detector.snapshot()
             if snapshot.state == PortalPageState.LOGIN:
                 return snapshot
-            if snapshot.state in {
-                PortalPageState.OTP,
-                PortalPageState.MY_SERVICES,
-                PortalPageState.HPOS_LANDING,
-                PortalPageState.MBS_FORM,
-                PortalPageState.MBS_RESULTS,
-            }:
+            if snapshot.is_authenticated:
+                # PRODA and HPOS keep separate sessions. When only the HPOS
+                # sub-session expires, PRODA still has us logged in and
+                # redirects the login URL straight back to My Services. That
+                # is not a failure - it means no credentials are needed.
+                return snapshot
+            if snapshot.state == PortalPageState.OTP:
                 raise LoginError(
                     "Browser landed on unexpected page while opening login: "
                     f"state={snapshot.state.value} url='{snapshot.url}'"
@@ -124,7 +124,14 @@ class ProdaAuthenticator:
             if login_try > 1:
                 log(f"Restarting full login (attempt {login_try}/{max_login_retries})")
 
-            self._navigate_to_login()
+            snapshot = self._navigate_to_login()
+            if snapshot.is_authenticated:
+                log(
+                    "PRODA session is still authenticated "
+                    f"(state={snapshot.state.value}) - skipping credential entry"
+                )
+                return
+
             self._enter_credentials()
 
             # Purge old OTP emails and set the request timestamp BEFORE

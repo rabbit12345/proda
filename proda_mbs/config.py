@@ -33,9 +33,11 @@ class MbsConfig:
 @dataclass
 class SessionConfig:
     keepalive_interval_seconds: int = 300
-    # Re-login proactively before the portal's absolute session cap expires
-    # (keep-alive pings only defer the idle timeout). 0 disables.
-    preemptive_relogin_seconds: int = 6 * 3600
+    # Re-enter HPOS proactively before its absolute session cap expires
+    # (observed at ~1 hour; keep-alive pings only defer the idle timeout).
+    # Recovery walks back in through My Services, so this costs no OTP.
+    # 0 disables.
+    preemptive_relogin_seconds: int = 2700
     page_load_timeout: int = 30
     element_wait_timeout: int = 15
     ajax_stability_delay: float = 0.05

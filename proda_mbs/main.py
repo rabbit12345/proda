@@ -212,7 +212,19 @@ def _ensure_mbs_context(
             f"Session is not recoverable in-place: state={snapshot.state.value}"
         )
 
-    if snapshot.state in {PortalPageState.MY_SERVICES, PortalPageState.HPOS_LANDING}:
+    # Being on My Services means the HPOS sub-session expired while PRODA is
+    # still logged in: walk back in through "Go to service" rather than
+    # jumping straight at the MBS URL, which would just bounce us out again.
+    if snapshot.state == PortalPageState.MY_SERVICES:
+        try:
+            navigator.navigate_to_mbs_checker_full()
+        except NavigationError:
+            snapshot = detector.snapshot()
+            if _state_requires_relogin(snapshot.state):
+                session_keeper.mark_session_lost()
+            raise
+        snapshot = detector.snapshot()
+    elif snapshot.state == PortalPageState.HPOS_LANDING:
         try:
             navigator.navigate_to_mbs_checker()
         except NavigationError:
@@ -240,8 +252,23 @@ def _ensure_mbs_context(
         try:
             snapshot = checker.recover_mbs_page(snapshot)
         except MbsCheckerError:
-            session_keeper.mark_session_lost()
-            raise
+            # Resetting/refreshing the form bounces to My Services once the
+            # HPOS sub-session has expired. PRODA is still logged in, so
+            # re-enter HPOS in place instead of declaring the session lost.
+            after = detector.snapshot()
+            if after.state not in {
+                PortalPageState.MY_SERVICES,
+                PortalPageState.HPOS_LANDING,
+            }:
+                session_keeper.mark_session_lost()
+                raise
+            log(f"Form reset landed on {after.state.value}; re-entering HPOS")
+            try:
+                navigator.navigate_to_mbs_checker_full()
+                snapshot = checker.wait_until_form_ready()
+            except (NavigationError, MbsCheckerError):
+                session_keeper.mark_session_lost()
+                raise
     else:
         snapshot = checker.wait_until_form_ready()
 
@@ -375,21 +402,29 @@ def main():
             with recovery_lock:
                 if reason == "session lost" and session_keeper.is_session_valid:
                     return True  # another thread already recovered
-                log(f"Attempting re-login ({reason})...")
+                log(f"Attempting session recovery ({reason})...")
                 session_keeper.stop()
                 try:
                     with driver_lock:
-                        ProdaAuthenticator(driver, config).login()
-                        navigator.navigate_to_mbs_checker_full()
+                        # HPOS expires long before PRODA does, so try the cheap
+                        # path first: walk back in through My Services, which
+                        # needs no credentials and no OTP. Only if that fails
+                        # is the PRODA session itself gone.
+                        try:
+                            navigator.navigate_to_mbs_checker_full()
+                        except NavigationError as exc:
+                            log(f"HPOS re-entry failed ({exc}); doing full PRODA login")
+                            ProdaAuthenticator(driver, config).login()
+                            navigator.navigate_to_mbs_checker_full()
                         checker.wait_until_form_ready()
                 except (LoginError, NavigationError, MbsCheckerError) as exc:
-                    log(f"Re-login failed: {exc}")
+                    log(f"Session recovery failed: {exc}")
                     session_keeper.mark_session_lost()
                     return False
                 session_keeper.start()
                 last_login["at"] = time.monotonic()
                 form_fresh.set()
-                log("Re-login successful")
+                log("Session recovery successful")
                 return True
 
         def _watchdog():
@@ -458,8 +493,15 @@ def main():
             if not session_keeper.is_session_valid:
                 recovery_attempts += 1
                 if recovery_attempts > _MAX_RECOVERY_ATTEMPTS:
-                    log(f"Session recovery failed {_MAX_RECOVERY_ATTEMPTS} times, giving up")
-                    break
+                    # Don't tear the browser down: the background watchdog
+                    # keeps retrying, so let the user try again (or 'q') rather
+                    # than losing the window and every logged-in session.
+                    log(
+                        f"Session recovery failed {_MAX_RECOVERY_ATTEMPTS} times; "
+                        "background retry continues - press Enter to retry or 'q' to quit"
+                    )
+                    recovery_attempts = 0
+                    continue
                 log(
                     f"Session invalid, recovering "
                     f"(attempt {recovery_attempts}/{_MAX_RECOVERY_ATTEMPTS})..."
@@ -541,9 +583,14 @@ def main():
                         log("Patient check left browser in unknown state - marking session lost")
                         session_keeper.mark_session_lost()
 
-            if result is None and not session_keeper.is_session_valid:
-                # The check never produced results because the session died;
-                # rerun this patient automatically after relogin.
+            if result is None and (
+                not session_keeper.is_session_valid
+                or post_check_snapshot.state
+                in {PortalPageState.MY_SERVICES, PortalPageState.HPOS_LANDING}
+            ):
+                # The check never produced results because the session (or just
+                # the HPOS sub-session) died mid-check; rerun this patient
+                # automatically once we are back on the form.
                 pending_patient = patient
             elif result is not None:
                 # A clean check proves the session is healthy; clear the
