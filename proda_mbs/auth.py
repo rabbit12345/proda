@@ -5,7 +5,11 @@ import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import (
+    ElementClickInterceptedException,
+    NoSuchElementException,
+    TimeoutException,
+)
 
 from .config import AppConfig
 from .gmail_otp import GmailOtpExtractor, GmailAuthError
@@ -333,6 +337,27 @@ class ProdaAuthenticator:
             log("No OTP code found in Gmail")
         return code
 
+    def _click_element(self, el):
+        """Click an element, falling back to a scripted click when another
+        element overlays it (e.g. the 'resendcodemsg' banner that PRODA drops
+        over the resend link after a previous resend)."""
+        try:
+            el.click()
+            return
+        except ElementClickInterceptedException:
+            log("Click intercepted by an overlay, retrying via scroll + JS click")
+
+        try:
+            self.driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'});", el
+            )
+            el.click()
+            return
+        except ElementClickInterceptedException:
+            pass
+
+        self.driver.execute_script("arguments[0].click();", el)
+
     def _click_didnt_get_code(self):
         """Click 'Didn't get your code?' link to request a new OTP."""
         resend_selectors = [
@@ -347,7 +372,7 @@ class ProdaAuthenticator:
             try:
                 el = self._wait(EC.element_to_be_clickable((by, selector)), timeout=5)
                 self.gmail_extractor.mark_otp_requested()
-                el.click()
+                self._click_element(el)
                 log("Clicked 'Didn't get your code?' link")
                 # Wait for OTP field to be ready again (no fixed sleep)
                 try:

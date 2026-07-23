@@ -27,6 +27,8 @@ _OTP_SUBJECT_KEYWORDS = ["verification", "otp", "one-time", "security code"]
 class GmailOtpExtractor:
     SENDER = "proda@servicesaustralia.gov.au"
     OTP_PATTERN = re.compile(r"^\d{6}$")
+    # Standalone 6-digit run, used only as a fallback when no <strong> matches.
+    OTP_LOOSE_PATTERN = re.compile(r"(?<!\d)\d{6}(?!\d)")
 
     def __init__(self, config: GmailConfig):
         self.config = config
@@ -204,21 +206,50 @@ class GmailOtpExtractor:
                     continue
 
                 msg_raw = base64.urlsafe_b64decode(data)
-                soup = BeautifulSoup(msg_raw, "html.parser")
-                strong_tag = soup.body.find("strong") if soup.body else None
+                code = self._extract_code_from_html(msg_raw)
 
-                if strong_tag:
-                    code = strong_tag.get_text().strip()
-                    if self.OTP_PATTERN.match(code):
-                        log(f"Found fresh OTP: {code}")
-                        self.service.users().messages().trash(
-                            userId="me", id=message["id"]
-                        ).execute()
-                        return code
+                if code:
+                    log(f"Found fresh OTP: {code}")
+                    self.service.users().messages().trash(
+                        userId="me", id=message["id"]
+                    ).execute()
+                    return code
+
+                # A fresh OTP email was matched but yielded no code — surface
+                # it instead of silently polling on, which looks like the email
+                # never arrived.
+                log(
+                    f"OTP email {message['id']} matched but no 6-digit code "
+                    "could be extracted from its body"
+                )
             except Exception as e:
                 log(f"Warning: could not inspect message {message['id']}: {e}")
                 continue
 
+        return None
+
+    @classmethod
+    def _extract_code_from_html(cls, msg_raw: bytes) -> str | None:
+        """Pull the 6-digit OTP out of an email body.
+
+        PRODA wraps the code in <strong>, but not always as the first such tag
+        (headings and greetings are bolded too), so every <strong> is checked
+        before falling back to a scan of the plain text.
+        """
+        soup = BeautifulSoup(msg_raw, "html.parser")
+        root = soup.body or soup
+
+        for tag in root.find_all("strong"):
+            candidate = tag.get_text().strip()
+            if cls.OTP_PATTERN.match(candidate):
+                return candidate
+
+        # Fallback: the code may not be bolded at all in some templates.
+        matches = cls.OTP_LOOSE_PATTERN.findall(root.get_text(" ", strip=True))
+        if len(set(matches)) == 1:
+            return matches[0]
+        if matches:
+            log(f"Ambiguous 6-digit candidates in OTP email: {sorted(set(matches))}")
         return None
 
     @staticmethod
