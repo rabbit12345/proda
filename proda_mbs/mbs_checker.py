@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import List, Dict, Optional
 
 from selenium.webdriver.common.by import By
@@ -11,6 +12,7 @@ from selenium.common.exceptions import (
     TimeoutException,
     NoSuchElementException,
     StaleElementReferenceException,
+    WebDriverException,
 )
 
 from .config import AppConfig
@@ -125,13 +127,25 @@ class MbsChecker:
         timeout: int,
         allow_mbs_states: bool,
         poll_frequency: float = 0.5,
+        snapshot_interval: float = 0.0,
     ):
+        # A snapshot costs ~10 WebDriver round-trips, so taking one on every
+        # failed poll throttles a fast poll loop to the snapshot's own speed.
+        # snapshot_interval spaces them out; a terminal state is still caught,
+        # just up to that interval later, and always on timeout below.
+        last_snapshot_at = 0.0
+
         def _guarded(driver):
+            nonlocal last_snapshot_at
             # Check the expected outcome first; the state snapshot is only
             # needed when the outcome has not appeared yet.
             result = condition(driver)
             if result:
                 return result
+            now = time.monotonic()
+            if snapshot_interval and (now - last_snapshot_at) < snapshot_interval:
+                return False
+            last_snapshot_at = now
             snapshot = self.state_detector.snapshot()
             self._raise_for_terminal_state(
                 snapshot,
@@ -403,21 +417,77 @@ class MbsChecker:
                     return text
         return None
 
-    def _get_selected_items(self) -> set[str]:
-        items = set()
+    # Reads the selection panel and one item's checkbox state in a single
+    # round-trip. Doing this element-by-element cost one WebDriver command per
+    # panel entry, which dominated the per-item confirmation wait.
+    _SELECTION_PROBE_JS = """
+        const padded = arguments[0];
+        const panel = document.getElementById('guiForm:itemSelector');
+        const selected = [];
+        if (panel) {
+            for (const child of panel.children) {
+                if (child.tagName !== 'DIV') continue;
+                // Must match Selenium's .text, which reports rendered text
+                // only. innerText is not sufficient: the spec makes it fall
+                // back to textContent for an unrendered element, so a row
+                // hidden mid-AJAX would wrongly count as selected and let the
+                // next click land early — the dropped-selection bug itself.
+                if (child.getClientRects().length === 0) continue;
+                const text = (child.innerText || '').trim();
+                const match = text.match(/^(\\d{5})/);
+                if (match) selected.push(match[1]);
+            }
+        }
+
+        let checkboxFound = false;
+        let checkboxChecked = false;
+        if (padded) {
+            const labels = document.getElementsByTagName('label');
+            // Exact label text first, then a contains match — the same order
+            // the Selenium lookup uses.
+            for (const exact of [true, false]) {
+                for (const label of labels) {
+                    const text = (label.textContent || '').trim();
+                    const hit = exact ? text === padded : text.includes(padded);
+                    if (!hit) continue;
+                    const forId = label.getAttribute('for');
+                    if (!forId) continue;
+                    const box = document.getElementById(forId);
+                    if (box) {
+                        checkboxFound = true;
+                        checkboxChecked = !!box.checked;
+                        break;
+                    }
+                }
+                if (checkboxFound) break;
+            }
+        }
+
+        return {
+            selected: selected,
+            checkboxFound: checkboxFound,
+            checkboxChecked: checkboxChecked
+        };
+    """
+
+    def _probe_selection(self, padded_item: str | None = None) -> dict:
+        """One-round-trip read of the selection panel (and optionally whether a
+        given item's checkbox is ticked)."""
         try:
-            panel = self.driver.find_element(By.ID, "guiForm:itemSelector")
-            for label in panel.find_elements(By.XPATH, "./div"):
-                text = label.text.strip()
-                match = re.match(r"^(\d{5})", text)
-                if match:
-                    items.add(match.group(1))
-        except (NoSuchElementException, StaleElementReferenceException):
-            # The selector panel re-renders via AJAX during selection; a stale
-            # read means it is mid-update, so return what was gathered and let
-            # the caller's poll retry on the next tick.
-            return items
-        return items
+            result = self.driver.execute_script(
+                self._SELECTION_PROBE_JS, padded_item or ""
+            )
+        except WebDriverException:
+            # The panel re-renders via AJAX during selection; a failed read
+            # means it is mid-update, so report nothing and let the caller's
+            # poll retry on the next tick.
+            return {"selected": [], "checkboxFound": False, "checkboxChecked": False}
+        if not isinstance(result, dict):
+            return {"selected": [], "checkboxFound": False, "checkboxChecked": False}
+        return result
+
+    def _get_selected_items(self) -> set[str]:
+        return {str(item) for item in self._probe_selection().get("selected", [])}
 
     def _wait_for_item_selected(
         self,
@@ -427,25 +497,26 @@ class MbsChecker:
         timeout: int = 4,
     ):
         def _item_selected(driver):
-            selected_items = self._get_selected_items()
-            if padded_item not in selected_items:
+            probe = self._probe_selection(padded_item)
+            if padded_item not in {str(i) for i in probe.get("selected", [])}:
                 return False
 
             if padded_item not in previous_selected:
                 return True
 
-            try:
-                checkbox = self._find_item_checkbox(padded_item, prefer_active_panel=False)
-            except NoSuchElementException:
+            # Item was already listed before this click, so the panel entry
+            # alone proves nothing — confirm the checkbox is actually ticked.
+            if not probe.get("checkboxFound"):
                 return True
-            return checkbox.is_selected()
+            return bool(probe.get("checkboxChecked"))
 
         self._wait_for_expected_or_terminal(
             _item_selected,
             action=f"Selecting item {padded_item}",
             timeout=timeout,
             allow_mbs_states=True,
-            poll_frequency=0.1,
+            poll_frequency=0.05,
+            snapshot_interval=1.0,
         )
 
     def _get_tab_ranges(self) -> List[Dict]:
