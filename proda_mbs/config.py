@@ -33,10 +33,11 @@ class MbsConfig:
 @dataclass
 class SessionConfig:
     keepalive_interval_seconds: int = 300
-    # Re-enter HPOS proactively before its absolute session cap expires
-    # (observed at ~1 hour; keep-alive pings only defer the idle timeout).
-    # Recovery walks back in through My Services, so this costs no OTP.
-    # 0 disables.
+    # Age at which an HPOS session is refreshed at the next idle moment (just
+    # after a check completes), staying inside its ~1 hour absolute cap, which
+    # keep-alive pings cannot extend. Re-entry walks back in through My
+    # Services, so it costs no OTP. The background watchdog uses this plus a
+    # 5 minute grace as a backstop when nobody is running checks. 0 disables.
     preemptive_relogin_seconds: int = 2700
     page_load_timeout: int = 30
     element_wait_timeout: int = 15

@@ -427,13 +427,34 @@ def main():
                 log("Session recovery successful")
                 return True
 
+        def _session_age() -> float:
+            return time.monotonic() - last_login["at"]
+
+        def _reenter_if_stale_at_idle():
+            """Refresh an ageing HPOS session at an idle moment.
+
+            Called just after a check completes, while the user is reading
+            results and typing the next patient. Re-entry costs a few seconds
+            there and nothing observable, whereas letting the session hit the
+            ~1h cap makes the *next* check pay for it mid-call.
+            """
+            threshold = config.session.preemptive_relogin_seconds
+            if not threshold or _session_age() < threshold:
+                return
+            age = int(_session_age())
+            _try_recover(f"idle re-entry, HPOS session is {age}s old")
+
         def _watchdog():
-            # Relogs in as soon as the keeper marks the session lost (instead
-            # of waiting for the next patient prompt) and preemptively before
-            # the portal's absolute session cap. Never gives up: unattended
-            # overnight operation just retries with capped backoff.
+            # Recovers as soon as the keeper marks the session lost (instead of
+            # waiting for the next patient prompt), and acts as the backstop for
+            # preemptive re-entry when nobody is running checks. Never gives up:
+            # unattended overnight operation just retries with capped backoff.
             failures = 0
-            preemptive = config.session.preemptive_relogin_seconds
+            threshold = config.session.preemptive_relogin_seconds
+            # Grace margin so the idle path (which fires at the threshold from a
+            # natural pause) normally gets there first; this only fires when the
+            # operator has walked away mid-session.
+            backstop = threshold + 300 if threshold else 0
             while not watchdog_stop.wait(30):
                 if not session_keeper.is_session_valid:
                     if _try_recover("session lost"):
@@ -444,8 +465,8 @@ def main():
                         log(f"Background recovery failed; retrying in {delay}s")
                         if watchdog_stop.wait(delay):
                             return
-                elif preemptive and time.monotonic() - last_login["at"] >= preemptive:
-                    _try_recover("preemptive re-login before absolute session timeout")
+                elif backstop and _session_age() >= backstop:
+                    _try_recover("idle backstop before absolute HPOS timeout")
 
         threading.Thread(target=_watchdog, name="session-watchdog", daemon=True).start()
 
@@ -599,6 +620,14 @@ def main():
                 recovery_attempts = 0
 
             first_check = False
+
+            # Idle moment: the results are on screen and the operator is
+            # reading them, so refresh an ageing HPOS session now rather than
+            # letting the next check discover it has expired. Deliberately
+            # outside recovery_lock - _try_recover takes it itself. Skipped
+            # when a patient is queued, since that is not really idle.
+            if pending_patient is None:
+                _reenter_if_stale_at_idle()
 
     except LoginError as exc:
         log(f"Login failed: {exc}")
