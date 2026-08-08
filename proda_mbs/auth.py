@@ -5,10 +5,15 @@ import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import (
+    ElementClickInterceptedException,
+    NoSuchElementException,
+    TimeoutException,
+)
 
 from .config import AppConfig
 from .gmail_otp import GmailOtpExtractor, GmailAuthError
+from .page_state import PageStateDetector, PortalPageState
 from .waits import wait_for_ajax, wait_for_page_load, log
 
 
@@ -40,6 +45,7 @@ class ProdaAuthenticator:
         self.wait_timeout = config.session.element_wait_timeout
         self.page_timeout = config.session.page_load_timeout
         self.gmail_extractor = None
+        self.state_detector = PageStateDetector(driver)
 
     def _wait(self, condition, timeout=None):
         return WebDriverWait(self.driver, timeout or self.wait_timeout).until(condition)
@@ -49,6 +55,36 @@ class ProdaAuthenticator:
             return f"title='{self.driver.title}' url='{self.driver.current_url}'"
         except Exception:
             return "could not read page state"
+
+    def _wait_for_login_page(self, timeout: int):
+        def _login_snapshot_or_terminal(_driver):
+            snapshot = self.state_detector.snapshot()
+            if snapshot.state == PortalPageState.LOGIN:
+                return snapshot
+            if snapshot.is_authenticated:
+                # PRODA and HPOS keep separate sessions. When only the HPOS
+                # sub-session expires, PRODA still has us logged in and
+                # redirects the login URL straight back to My Services. That
+                # is not a failure - it means no credentials are needed.
+                return snapshot
+            if snapshot.state == PortalPageState.OTP:
+                raise LoginError(
+                    "Browser landed on unexpected page while opening login: "
+                    f"state={snapshot.state.value} url='{snapshot.url}'"
+                )
+            if snapshot.state in {
+                PortalPageState.SESSION_EXPIRED,
+                PortalPageState.LOGGED_OUT,
+                PortalPageState.OFFSITE,
+                PortalPageState.BROWSER_UNAVAILABLE,
+            }:
+                raise LoginError(
+                    "PRODA did not present the login form after navigation: "
+                    f"state={snapshot.state.value} url='{snapshot.url}'"
+                )
+            return False
+
+        return self._wait(_login_snapshot_or_terminal, timeout=timeout)
 
     def _find_error_on_page(self) -> str | None:
         """Scan the current page for visible error messages."""
@@ -88,7 +124,14 @@ class ProdaAuthenticator:
             if login_try > 1:
                 log(f"Restarting full login (attempt {login_try}/{max_login_retries})")
 
-            self._navigate_to_login()
+            snapshot = self._navigate_to_login()
+            if snapshot.is_authenticated:
+                log(
+                    "PRODA session is still authenticated "
+                    f"(state={snapshot.state.value}) - skipping credential entry"
+                )
+                return
+
             self._enter_credentials()
 
             # Purge old OTP emails and set the request timestamp BEFORE
@@ -109,7 +152,19 @@ class ProdaAuthenticator:
                 self._request_otp_via_email()
 
             if self._otp_loop(max_otp_attempts):
-                log("Login complete - reached My Services page")
+                snapshot = self.state_detector.snapshot()
+                if snapshot.state not in {
+                    PortalPageState.MY_SERVICES,
+                    PortalPageState.HPOS_LANDING,
+                    PortalPageState.MBS_FORM,
+                    PortalPageState.MBS_RESULTS,
+                }:
+                    raise LoginError(
+                        "Login completed but browser did not land on an "
+                        f"authenticated page: state={snapshot.state.value} "
+                        f"url='{snapshot.url}'"
+                    )
+                log("Login complete - reached authenticated portal")
                 return
 
             if login_try < max_login_retries:
@@ -151,14 +206,12 @@ class ProdaAuthenticator:
         log("Navigating to PRODA login page")
         self.driver.get(self.config.proda.url)
         try:
-            wait_for_page_load(self.driver, self.page_timeout)
-            self._wait(
-                EC.presence_of_element_located(
-                    (By.ID, "loginFormAndStuff:username")
-                ),
-                timeout=self.page_timeout
-            )
+            wait_for_page_load(self.driver, min(self.page_timeout, 5))
+            snapshot = self._wait_for_login_page(timeout=self.page_timeout)
             log(f"Login page loaded ({self._diag()})")
+            return snapshot
+        except LoginError:
+            raise
         except TimeoutException:
             raise LoginError(f"PRODA login page did not load. {self._diag()}")
 
@@ -226,9 +279,7 @@ class ProdaAuthenticator:
         """Check if the OTP entry field is already visible,
         meaning the portal sent OTP to the default channel."""
         try:
-            WebDriverWait(self.driver, timeout).until(
-                EC.presence_of_element_located((By.ID, "otppswd"))
-            )
+            self._wait(EC.presence_of_element_located((By.ID, "otppswd")), timeout=timeout)
             return True
         except TimeoutException:
             return False
@@ -293,6 +344,27 @@ class ProdaAuthenticator:
             log("No OTP code found in Gmail")
         return code
 
+    def _click_element(self, el):
+        """Click an element, falling back to a scripted click when another
+        element overlays it (e.g. the 'resendcodemsg' banner that PRODA drops
+        over the resend link after a previous resend)."""
+        try:
+            el.click()
+            return
+        except ElementClickInterceptedException:
+            log("Click intercepted by an overlay, retrying via scroll + JS click")
+
+        try:
+            self.driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'});", el
+            )
+            el.click()
+            return
+        except ElementClickInterceptedException:
+            pass
+
+        self.driver.execute_script("arguments[0].click();", el)
+
     def _click_didnt_get_code(self):
         """Click 'Didn't get your code?' link to request a new OTP."""
         resend_selectors = [
@@ -305,11 +377,9 @@ class ProdaAuthenticator:
         ]
         for by, selector in resend_selectors:
             try:
-                el = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((by, selector))
-                )
+                el = self._wait(EC.element_to_be_clickable((by, selector)), timeout=5)
                 self.gmail_extractor.mark_otp_requested()
-                el.click()
+                self._click_element(el)
                 log("Clicked 'Didn't get your code?' link")
                 # Wait for OTP field to be ready again (no fixed sleep)
                 try:
@@ -339,8 +409,9 @@ class ProdaAuthenticator:
             otp_field.send_keys(code)
 
             # Verify the field accepted all characters
-            WebDriverWait(self.driver, 5).until(
-                lambda d: d.find_element(By.ID, "otppswd").get_attribute("value") == code
+            self._wait(
+                lambda d: d.find_element(By.ID, "otppswd").get_attribute("value") == code,
+                timeout=5
             )
 
             # Wait for any client-side validation AJAX
@@ -363,11 +434,6 @@ class ProdaAuthenticator:
             url = self.driver.current_url
             log(f"Post-OTP state: title='{title}' url='{url}'")
 
-            otp_error = self._check_otp_error_message()
-            if otp_error:
-                log(f"OTP rejected: {otp_error}")
-                return False
-
             error_msg = self._find_error_on_page()
             if error_msg:
                 log(f"OTP error: {error_msg}")
@@ -378,12 +444,3 @@ class ProdaAuthenticator:
                 return True
 
             return False
-
-    def _check_otp_error_message(self) -> str | None:
-        try:
-            body_text = self.driver.find_element(By.TAG_NAME, "body").text
-            if "verification code is incorrect or expired" in body_text.lower():
-                return "Your second stage verification code is incorrect or expired"
-        except Exception:
-            pass
-        return None

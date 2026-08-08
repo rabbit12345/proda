@@ -33,8 +33,15 @@ class MbsConfig:
 @dataclass
 class SessionConfig:
     keepalive_interval_seconds: int = 300
+    # Age at which an HPOS session is refreshed at the next idle moment (just
+    # after a check completes), staying inside its ~1 hour absolute cap, which
+    # keep-alive pings cannot extend. Re-entry walks back in through My
+    # Services, so it costs no OTP. The background watchdog uses this plus a
+    # 5 minute grace as a backstop when nobody is running checks. 0 disables.
+    preemptive_relogin_seconds: int = 2700
     page_load_timeout: int = 30
     element_wait_timeout: int = 15
+    ajax_stability_delay: float = 0.05
     retry_count: int = 3
 
 
@@ -103,11 +110,17 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
         config.session.keepalive_interval_seconds = session.get(
             "keepalive_interval_seconds", config.session.keepalive_interval_seconds
         )
+        config.session.preemptive_relogin_seconds = session.get(
+            "preemptive_relogin_seconds", config.session.preemptive_relogin_seconds
+        )
         config.session.page_load_timeout = session.get(
             "page_load_timeout", config.session.page_load_timeout
         )
         config.session.element_wait_timeout = session.get(
             "element_wait_timeout", config.session.element_wait_timeout
+        )
+        config.session.ajax_stability_delay = session.get(
+            "ajax_stability_delay", config.session.ajax_stability_delay
         )
         config.session.retry_count = session.get(
             "retry_count", config.session.retry_count

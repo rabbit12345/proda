@@ -1,12 +1,12 @@
 @echo off
 REM ================================================================
 REM  PRODA MBS Checker - Windows Server Installer
-REM  Supports: Windows Server 2008 R2, 2012, 2016, 2019, 2022
+REM  Supports: Windows Server 2008 R2, 2012, 2016, 2019, 2022, 2025
 REM  One-click entry point. Double-click or run from cmd.
 REM
 REM  This script:
 REM    1. Detects OS version and adapts installation accordingly
-REM    2. Checks for administrator privileges
+REM    2. Checks for administrator privileges (only required on Server 2008 R2/2012)
 REM    3. Enables TLS 1.2 if needed (Server 2008 R2 only)
 REM    4. Delegates to install-server2008.ps1 for the main install
 REM    5. Falls back to batch-only install if PowerShell 3.0+ unavailable
@@ -24,6 +24,7 @@ echo.
 REM -- Step 0: Detect OS version --
 REM Server 2008 R2 = 6.1, Server 2012 = 6.2, Server 2012 R2 = 6.3
 REM Server 2016 = 10.0.14393, Server 2019 = 10.0.17763, Server 2022 = 10.0.20348
+REM Server 2025 = 10.0.26100
 set OS_MAJOR=0
 set OS_MINOR=0
 set IS_LEGACY=0
@@ -46,23 +47,34 @@ if %IS_LEGACY%==1 (
 echo.
 
 REM -- Step 1: Check administrator privileges --
+REM Only the legacy TLS 1.2 registry setup needs elevation. On modern Windows
+REM everything lands in this folder and the user profile, so a standard
+REM (non-administrator) account can install and run the application.
+set IS_ADMIN=1
 net session >nul 2>&1
-if errorlevel 1 (
-    echo [WARN] Not running as Administrator.
-    echo        Right-click this file and select "Run as administrator".
-    echo.
-    if %IS_LEGACY%==1 (
-        echo        TLS 1.2 configuration requires administrator privileges.
-    ) else (
-        echo        Administrator privileges are recommended for installation.
-    )
-    echo        The installer cannot proceed without them.
-    echo.
-    pause
-    exit /b 1
-)
+if errorlevel 1 set IS_ADMIN=0
 
-echo [INFO] Running with administrator privileges.
+if !IS_ADMIN!==1 (
+    echo [INFO] Running with administrator privileges.
+) else (
+    if %IS_LEGACY%==1 goto :need_admin
+    echo [INFO] Running as a standard user ^(no administrator rights^).
+    echo        Supported: the application installs into this folder and
+    echo        your user profile only.
+)
+goto :admin_check_done
+
+:need_admin
+echo [ERROR] Administrator privileges are required on this Windows version.
+echo         TLS 1.2 must be enabled in the registry before installing,
+echo         and that write needs elevation.
+echo.
+echo         Right-click this file and select "Run as administrator".
+echo.
+pause
+exit /b 1
+
+:admin_check_done
 
 REM -- Step 2: Enable TLS 1.2 (legacy OS only) --
 if %IS_LEGACY%==1 (
@@ -101,20 +113,44 @@ if %IS_LEGACY%==1 (
     echo [INFO] TLS 1.2 is enabled by default on this OS. Skipping registry setup.
 )
 
-REM -- Step 3: Detect PowerShell version --
+REM -- Step 3: Detect PowerShell --
+REM Prefer pwsh (PowerShell 7+). Windows PowerShell 5.1 is a separate engine
+REM and can be absent on a modern Server build, in which case 'powershell'
+REM resolves to nothing and the version probe silently yields 0.
+set PS_EXE=
 set PS_VERSION=0
-for /f "tokens=*" %%i in ('powershell -NoProfile -Command "$PSVersionTable.PSVersion.Major" 2^>nul') do (
-    set PS_VERSION=%%i
+
+where pwsh >nul 2>&1
+if not errorlevel 1 (
+    for /f "tokens=*" %%i in ('pwsh -NoProfile -Command "$PSVersionTable.PSVersion.Major" 2^>nul') do set PS_VERSION=%%i
+    if !PS_VERSION! GEQ 3 set PS_EXE=pwsh
 )
 
-echo [INFO] PowerShell version detected: %PS_VERSION%
+if not defined PS_EXE (
+    where powershell >nul 2>&1
+    if not errorlevel 1 (
+        for /f "tokens=*" %%i in ('powershell -NoProfile -Command "$PSVersionTable.PSVersion.Major" 2^>nul') do set PS_VERSION=%%i
+        if !PS_VERSION! GEQ 3 set PS_EXE=powershell
+    )
+)
+
+if defined PS_EXE (
+    echo [INFO] PowerShell: !PS_EXE! ^(major version !PS_VERSION!^)
+) else (
+    echo [INFO] No usable PowerShell found ^(need 3.0+^).
+)
 
 REM -- Step 4: Delegate to PowerShell or fall back to batch --
-if %PS_VERSION% GEQ 3 (
+if defined PS_EXE (
     echo [INFO] Launching PowerShell installer...
     echo.
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install-server2008.ps1"
-    if errorlevel 1 (
+    !PS_EXE! -NoProfile -ExecutionPolicy Bypass -File "%~dp0install-server2008.ps1"
+    REM Capture the code before anything else runs - intervening commands can
+    REM clobber ERRORLEVEL, which would swallow a failed install.
+    set PS_EXIT=!ERRORLEVEL!
+    echo.
+    echo [INFO] Installer script exited with code !PS_EXIT!.
+    if not "!PS_EXIT!"=="0" (
         echo.
         echo [ERROR] PowerShell installer failed. See errors above.
         if !IS_LEGACY!==1 (
@@ -157,8 +193,8 @@ if not errorlevel 1 (
                 set PYTHON_CMD=python
             )
         ) else (
-            REM Server 2019+: Python 3.8+
-            if !PY_MINOR! GEQ 8 (
+            REM Server 2016+: Python 3.10+
+            if !PY_MINOR! GEQ 10 (
                 set PYTHON_CMD=python
             )
         )
@@ -181,7 +217,7 @@ if not defined PYTHON_CMD (
                     set PYTHON_CMD=py -3
                 )
             ) else (
-                if !PY_MINOR! GEQ 8 (
+                if !PY_MINOR! GEQ 10 (
                     set PYTHON_CMD=py -3
                 )
             )
@@ -198,7 +234,7 @@ if not defined PYTHON_CMD (
         echo.
         echo   DO NOT install Python 3.9 or newer -- it will NOT work on this OS.
     ) else (
-        echo [ERROR] Python 3.8+ not found.
+        echo [ERROR] Python 3.10+ not found.
         echo.
         echo   Install Python from: https://www.python.org/downloads/
     )
@@ -278,7 +314,8 @@ REM Create launcher
 echo [INFO] Creating launcher script...
 (
     echo @echo off
-    echo cd /d "%%~dp0"
+    echo REM pushd, not 'cd /d': cmd.exe cannot cd into a UNC path.
+    echo pushd "%%~dp0"
     echo.
     echo REM -- Pre-flight: verify venv exists --
     echo if not exist ".venv\Scripts\python.exe" ^(
@@ -290,7 +327,7 @@ echo [INFO] Creating launcher script...
     echo ^)
     echo.
     echo REM -- Pre-flight: verify dependencies installed --
-    echo .venv\Scripts\python.exe -c "import yaml, selenium, googleapiclient" 2^>nul
+    echo .venv\Scripts\python.exe -c "import yaml, selenium, googleapiclient, google_auth_oauthlib, bs4" 2^>nul
     echo if errorlevel 1 ^(
     echo     echo [ERROR] Required Python packages are missing.
     echo     echo         Reinstalling dependencies...

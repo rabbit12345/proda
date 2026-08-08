@@ -2,50 +2,38 @@ from __future__ import annotations
 
 import time
 
+from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import TimeoutException
 
 
 def log(msg: str):
     print(f"{time.strftime('%d/%m/%y %H:%M:%S')} {msg}")
 
 
-def wait_for_ajax(driver, timeout: int = 15):
-    """Wait for PrimeFaces AJAX queue to drain."""
+def wait_for_ajax(driver, timeout: int = 15, settle_delay: float = 0.25):
+    """Bounded settle wait without JavaScript execution.
+
+    PrimeFaces updates frequently replace parts of the DOM. A short body-presence
+    wait plus a tiny settle delay is safer than hot-path execute_script calls,
+    which can wedge the whole process when the browser transport stalls.
+    """
     try:
-        WebDriverWait(driver, timeout).until(
-            lambda d: d.execute_script(
-                "return typeof PrimeFaces === 'undefined' || "
-                "PrimeFaces.ajax.Queue.isEmpty()"
-            )
+        WebDriverWait(driver, min(timeout, 5)).until(
+            lambda d: len(d.find_elements(By.TAG_NAME, "body")) > 0
         )
-    except TimeoutException:
-        log("Warning: AJAX queue did not empty within timeout")
+        if settle_delay > 0:
+            time.sleep(settle_delay)
+    except (TimeoutException, WebDriverException):
+        log("Warning: AJAX settle wait did not complete cleanly")
 
 
 def wait_for_page_load(driver, timeout: int = 30):
-    """Wait for document.readyState == 'complete'.
-
-    Uses an async-friendly script with a short browser-side timeout so
-    that a single execute_script call cannot block indefinitely when the
-    page has slow/stuck resources (common on government portals).
-    """
-    script = (
-        "try { return document.readyState; } "
-        "catch(e) { return 'unknown'; }"
-    )
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            # Set a per-command timeout so execute_script cannot hang
-            # longer than 5 seconds even if the browser is blocked.
-            driver.set_script_timeout(5)
-            state = driver.execute_script(script)
-            if state == "complete":
-                return
-        except Exception:
-            pass  # Transport-level hang, browser busy — retry
-        time.sleep(0.5)
-    raise TimeoutException(
-        f"document.readyState did not reach 'complete' within {timeout}s"
-    )
+    """Wait for a usable page without synchronous JavaScript probes."""
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: len(d.find_elements(By.TAG_NAME, "body")) > 0
+        )
+        time.sleep(0.3)
+    except WebDriverException as exc:
+        raise TimeoutException(f"Browser did not reach a usable page within {timeout}s: {exc}") from exc

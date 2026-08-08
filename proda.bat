@@ -1,1 +1,1 @@
-python y:\code\python\proda\proda2.py
+python -m proda_mbs

@@ -20,9 +20,10 @@ mbs:
 
 session:
   keepalive_interval_seconds: 300   # Keep-alive interval (5 minutes)
+  preemptive_relogin_seconds: 2700  # Refresh HPOS at idle once this old (45m, 0 disables)
   page_load_timeout: 30             # Page load timeout in seconds
   element_wait_timeout: 15          # Element wait timeout in seconds
-  ajax_stability_delay: 1.0         # Delay between AJAX interactions in seconds
+  ajax_stability_delay: 0.05        # Delay between AJAX interactions in seconds
   retry_count: 3                    # Number of retries on failure
 
 browser:

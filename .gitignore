@@ -1,8 +1,14 @@
 # Credentials and tokens
-client_secret.json
+client_secret*.json
 token.json
 token.pickle
 config.yaml
+
+# Local debug captures
+entryerror.html
+invalidpt.html
+install-log.txt
+venv-location.txt
 
 # Build artifacts
 build/
@@ -18,3 +24,6 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+.venv.old-*/
+.venv-build/
+.tmp/

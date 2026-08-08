@@ -1,7 +1,16 @@
-selenium>=4.0.0
-pyyaml>=6.0
-google-api-python-client>=2.0.0
-google-auth-oauthlib>=1.0.0
-google-auth>=2.0.0
-beautifulsoup4>=4.9.0
-requests>=2.25.0
+# Verified against Python 3.14.7 on Windows Server 2025 (win_amd64).
+# Every package below resolves to a cp314 or pure-Python wheel, so no
+# compiler is needed on the server.
+#
+# pyyaml 6.0.3 is the first release shipping cp314 wheels - older pins fall
+# back to an sdist build and fail on a server without build tools.
+# selenium, google-auth, google-auth-oauthlib and requests all require
+# Python 3.10+ as of these versions.
+
+selenium>=4.46.0
+pyyaml>=6.0.3
+google-api-python-client>=2.198.0
+google-auth-oauthlib>=1.4.0
+google-auth>=2.56.3
+beautifulsoup4>=4.15.0
+requests>=2.34.2
